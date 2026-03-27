@@ -2457,7 +2457,7 @@ const App = (() => {
     }
   }
 
-  // ── Subscriptions ──────────────────────────────────────────
+  // ── Subscriptions (Active Customer Intelligence) ────────────
   const SUB_STATUS_CONFIG = {
     active: { label: 'Active', color: '#00c48c' },
     past_due: { label: 'Past Due', color: '#e8481e' },
@@ -2467,54 +2467,127 @@ const App = (() => {
     scheduled: { label: 'Scheduled', color: '#4c6ef5' },
     paused: { label: 'Paused', color: '#7c5cfc' },
   };
+  const REST_TYPE_LABELS = { hospitality: 'QSR', 'Food Truck': 'Food Truck', TSR: 'TSR', FD: 'FD', 'Coffee Shop/Bakery': 'Coffee/Bakery', 'Food Hall': 'Food Hall' };
+  const OWN_TYPE_LABELS = { Inderpendant: 'Independent', Franchisee: 'Franchisee', Franchisor: 'Franchisor', Enterprise: 'Enterprise' };
 
   async function renderSubscriptions() {
     try {
-      const companies = await getCachedSearch('subs_companies', 'companies',
-        ['name','subscription_status','arr','mrr','monthly_recurring_revenue_mrr','adyen_processing_arr','hubspot_owner_id'],
+      const companies = await getCachedSearch('subs_companies_full', 'companies',
+        ['name','subscription_status','arr','mrr','monthly_recurring_revenue_mrr','adyen_processing_arr',
+         'hubspot_owner_id','notes_last_contacted','notes_last_updated','activation_date',
+         'industrytype','cuisine_type','ownership_type','num_associated_contacts','num_contacted_notes',
+         'lifecyclestage','closedate','total_revenue','hs_last_sales_activity_timestamp'],
         [{ propertyName: 'subscription_status', operator: 'HAS_PROPERTY' }],
         [{ propertyName: 'name', direction: 'ASCENDING' }]
       );
 
       const all = companies.results;
+      const now = Date.now();
 
-      // Status counts
+      // Status groups
       const statusCounts = {};
-      all.forEach(c => {
-        const s = c.properties.subscription_status || 'unknown';
-        statusCounts[s] = (statusCounts[s] || 0) + 1;
-      });
-
+      all.forEach(c => { const s = c.properties.subscription_status || 'unknown'; statusCounts[s] = (statusCounts[s] || 0) + 1; });
       const active = all.filter(c => c.properties.subscription_status === 'active');
       const atRisk = all.filter(c => ['past_due','unpaid','paused'].includes(c.properties.subscription_status));
       const churned = all.filter(c => ['canceled','expired'].includes(c.properties.subscription_status));
+      const scheduled = all.filter(c => c.properties.subscription_status === 'scheduled');
 
-      const totalARR = active.reduce((s, c) => s + (parseFloat(c.properties.arr) || 0), 0);
-      const totalMRR = active.reduce((s, c) => s + (parseFloat(c.properties.mrr) || parseFloat(c.properties.monthly_recurring_revenue_mrr) || 0), 0);
-      const atRiskARR = atRisk.reduce((s, c) => s + (parseFloat(c.properties.arr) || 0), 0);
+      // Revenue
+      const sumARR = (list) => list.reduce((s, c) => s + (parseFloat(c.properties.arr) || 0), 0);
+      const sumMRR = (list) => list.reduce((s, c) => s + (parseFloat(c.properties.mrr) || parseFloat(c.properties.monthly_recurring_revenue_mrr) || 0), 0);
+      const sumAdyen = (list) => list.reduce((s, c) => s + (parseFloat(c.properties.adyen_processing_arr) || 0), 0);
+      const totalARR = sumARR(active);
+      const totalMRR = sumMRR(active);
+      const totalAdyen = sumAdyen(active);
+      const atRiskARR = sumARR(atRisk);
+      const churnedARR = sumARR(churned);
+      const avgARR = active.length > 0 ? totalARR / active.length : 0;
+
+      // Engagement health: days since last contact
+      function daysSince(dateStr) { return dateStr ? Math.floor((now - new Date(dateStr).getTime()) / 86400000) : 999; }
+      function healthBadge(days) {
+        if (days <= 7) return '<span class="badge badge-green">Healthy</span>';
+        if (days <= 21) return '<span class="badge badge-amber">Monitor</span>';
+        if (days <= 45) return '<span class="badge" style="background:#e8481e22;color:var(--red)">At Risk</span>';
+        return '<span class="badge badge-red">No Contact</span>';
+      }
+
+      // Restaurant type breakdown (active only)
+      const restTypeCounts = {};
+      const restTypeARR = {};
+      active.forEach(c => {
+        const t = c.properties.industrytype || 'Unknown';
+        restTypeCounts[t] = (restTypeCounts[t] || 0) + 1;
+        restTypeARR[t] = (restTypeARR[t] || 0) + (parseFloat(c.properties.arr) || 0);
+      });
+
+      // Cuisine breakdown (active only)
+      const cuisineCounts = {};
+      active.forEach(c => {
+        const cu = c.properties.cuisine_type || 'Unknown';
+        cuisineCounts[cu] = (cuisineCounts[cu] || 0) + 1;
+      });
+
+      // Ownership breakdown
+      const ownCounts = {};
+      active.forEach(c => {
+        const o = c.properties.ownership_type || 'Unknown';
+        ownCounts[o] = (ownCounts[o] || 0) + 1;
+      });
+
+      // ARR by rep (active only)
+      const repARR = {};
+      active.forEach(c => {
+        const oid = c.properties.hubspot_owner_id || 'unassigned';
+        if (!repARR[oid]) repARR[oid] = { arr: 0, count: 0 };
+        repARR[oid].arr += parseFloat(c.properties.arr) || 0;
+        repARR[oid].count++;
+      });
+      const repSorted = Object.entries(repARR).filter(([id]) => id !== 'unassigned').sort((a, b) => b[1].arr - a[1].arr);
+      const maxRepARR = repSorted[0]?.[1].arr || 1;
+
+      // ARR tiers
+      const tiers = [
+        { label: '$0 (Needs Setup)', min: -1, max: 0.01, color: '#e8481e' },
+        { label: 'Under $3K', min: 0.01, max: 3000, color: '#f5a623' },
+        { label: '$3K–$5K', min: 3000, max: 5000, color: '#4c6ef5' },
+        { label: '$5K–$8K', min: 5000, max: 8000, color: '#7c5cfc' },
+        { label: '$8K+', min: 8000, max: Infinity, color: '#00c48c' },
+      ];
+      const tierCounts = tiers.map(t => ({ ...t, count: active.filter(c => { const a = parseFloat(c.properties.arr) || 0; return a >= t.min && a < t.max; }).length }));
+
+      // Silent customers (active but no contact in 30+ days)
+      const silent = active.filter(c => daysSince(c.properties.notes_last_contacted) > 30)
+        .sort((a, b) => daysSince(b.properties.notes_last_contacted) - daysSince(a.properties.notes_last_contacted));
+
+      // Zero ARR active (need attention)
+      const zeroARR = active.filter(c => !(parseFloat(c.properties.arr) > 0));
 
       // Donut data
-      const donutData = Object.entries(statusCounts).map(([status, count]) => ({
-        label: SUB_STATUS_CONFIG[status]?.label || status,
-        value: count,
-        color: SUB_STATUS_CONFIG[status]?.color || '#999',
+      const statusDonut = Object.entries(statusCounts).map(([s, count]) => ({
+        label: SUB_STATUS_CONFIG[s]?.label || s, value: count, color: SUB_STATUS_CONFIG[s]?.color || '#999',
       }));
+      const cuisineDonut = Object.entries(cuisineCounts).filter(([,v]) => v > 0).sort((a,b) => b[1]-a[1]).slice(0, 10).map(([k, v], i) => ({
+        label: k, value: v, color: COLORS[i % COLORS.length],
+      }));
+
+      const maxRestType = Math.max(...Object.values(restTypeCounts), 1);
 
       $('content').innerHTML = `
         <div class="stats-row">
-          <div class="stat-card"><div class="label">Total Subscriptions</div><div class="value">${fmtN(all.length)}</div></div>
-          <div class="stat-card"><div class="label">Active</div><div class="value green">${fmtN(active.length)}</div></div>
-          <div class="stat-card"><div class="label">At Risk</div><div class="value ${atRisk.length > 0 ? 'red' : 'green'}">${fmtN(atRisk.length)}</div><div class="sub">Past due / Unpaid / Paused</div></div>
-          <div class="stat-card"><div class="label">Active ARR</div><div class="value blue">${fmt(totalARR)}</div></div>
+          <div class="stat-card"><div class="label">Active Customers</div><div class="value green">${fmtN(active.length)}</div><div class="sub">${fmtN(all.length)} total subscriptions</div></div>
+          <div class="stat-card"><div class="label">Active ARR</div><div class="value blue">${fmt(totalARR)}</div><div class="sub">Avg ${fmt(avgARR)} per customer</div></div>
           <div class="stat-card"><div class="label">Active MRR</div><div class="value purple">${fmt(totalMRR)}</div></div>
-          <div class="stat-card"><div class="label">At-Risk ARR</div><div class="value ${atRiskARR > 0 ? 'amber' : 'green'}">${fmt(atRiskARR)}</div></div>
+          <div class="stat-card"><div class="label">Adyen Processing ARR</div><div class="value">${fmt(totalAdyen)}</div></div>
+          <div class="stat-card"><div class="label">At Risk</div><div class="value ${atRisk.length > 0 ? 'red' : 'green'}">${fmtN(atRisk.length)}</div><div class="sub">${fmt(atRiskARR)} ARR at risk</div></div>
+          <div class="stat-card"><div class="label">Churned</div><div class="value" style="color:var(--muted)">${fmtN(churned.length)}</div><div class="sub">${fmt(churnedARR)} ARR lost</div></div>
         </div>
 
         <div style="display:grid; grid-template-columns: 1fr 1fr; gap: 20px;">
           <div class="card">
-            <div class="card-header"><h3>Status Breakdown</h3></div>
+            <div class="card-header"><h3>Subscription Status</h3></div>
             <div class="card-body">
-              ${Object.entries(statusCounts).sort((a, b) => b[1] - a[1]).map(([status, count], i) => {
+              ${Object.entries(statusCounts).sort((a, b) => b[1] - a[1]).map(([status, count]) => {
                 const cfg = SUB_STATUS_CONFIG[status] || { label: status, color: '#999' };
                 const pct = (count / all.length * 100).toFixed(0);
                 return `<div class="bar-row">
@@ -2530,20 +2603,136 @@ const App = (() => {
           </div>
         </div>
 
+        <div style="display:grid; grid-template-columns: 1fr 1fr; gap: 20px;">
+          <div class="card">
+            <div class="card-header"><h3>Restaurant Type (Active)</h3></div>
+            <div class="card-body">
+              ${Object.entries(restTypeCounts).sort((a, b) => b[1] - a[1]).map(([type, count], i) => {
+                const pct = (count / maxRestType * 100).toFixed(0);
+                return `<div class="bar-row">
+                  <div class="bar-label">${esc(REST_TYPE_LABELS[type] || type)} <span style="color:var(--muted);font-size:11px">(${fmt(restTypeARR[type] || 0)})</span></div>
+                  <div class="bar-track"><div class="bar-fill" style="width:${pct}%;background:${COLORS[i % COLORS.length]}"><span>${count}</span></div></div>
+                </div>`;
+              }).join('')}
+            </div>
+          </div>
+          <div class="card">
+            <div class="card-header"><h3>Cuisine Breakdown (Active)</h3></div>
+            <div class="card-body" id="sub-cuisine-donut"></div>
+          </div>
+        </div>
+
+        <div style="display:grid; grid-template-columns: 1fr 1fr; gap: 20px;">
+          <div class="card">
+            <div class="card-header"><h3>ARR by Account Manager</h3></div>
+            <div class="card-body">
+              ${repSorted.map(([id, r], i) => {
+                const pct = (r.arr / maxRepARR * 100).toFixed(0);
+                return `<div class="bar-row">
+                  <div class="bar-label">${esc(owners[id] || 'ID: ' + id)} <span style="color:var(--muted);font-size:11px">(${r.count} accts)</span></div>
+                  <div class="bar-track"><div class="bar-fill" style="width:${pct}%;background:${COLORS[i % COLORS.length]}"><span>${fmt(r.arr)}</span></div></div>
+                </div>`;
+              }).join('')}
+            </div>
+          </div>
+          <div class="card">
+            <div class="card-header"><h3>ARR Tiers (Active)</h3></div>
+            <div class="card-body">
+              ${tierCounts.map(t => {
+                const pct = active.length > 0 ? (t.count / active.length * 100).toFixed(0) : 0;
+                return `<div class="bar-row">
+                  <div class="bar-label">${t.label}</div>
+                  <div class="bar-track"><div class="bar-fill" style="width:${pct}%;background:${t.color}"><span>${t.count}</span></div></div>
+                </div>`;
+              }).join('')}
+              <div style="margin-top:12px;display:flex;gap:16px;flex-wrap:wrap">
+                ${Object.entries(ownCounts).sort((a,b) => b[1]-a[1]).map(([o, c]) =>
+                  `<span style="font-size:12px;padding:4px 10px;background:var(--bg);border-radius:6px"><strong>${OWN_TYPE_LABELS[o] || o}</strong>: ${c}</span>`
+                ).join('')}
+              </div>
+            </div>
+          </div>
+        </div>
+
         ${atRisk.length > 0 ? `<div class="card" style="border-left:4px solid var(--red)">
-          <div class="card-header"><h3 style="color:var(--red)">At-Risk Subscriptions</h3></div>
+          <div class="card-header"><h3 style="color:var(--red)">At-Risk Subscriptions — ${fmt(atRiskARR)} ARR at Stake</h3></div>
           <div class="card-body" style="padding:0;overflow-x:auto">
             <table>
-              <thead><tr><th>Company</th><th>Status</th><th>ARR</th><th>MRR</th><th>Owner</th></tr></thead>
+              <thead><tr><th>Company</th><th>Status</th><th>ARR</th><th>MRR</th><th>Type</th><th>Last Contact</th><th>Owner</th></tr></thead>
               <tbody>
-                ${atRisk.map(c => {
+                ${atRisk.sort((a,b) => (parseFloat(b.properties.arr)||0) - (parseFloat(a.properties.arr)||0)).map(c => {
                   const s = c.properties.subscription_status;
                   const cfg = SUB_STATUS_CONFIG[s] || { label: s, color: '#999' };
+                  const days = daysSince(c.properties.notes_last_contacted);
                   return `<tr>
                     <td style="font-weight:700">${esc(c.properties.name || '—')}</td>
                     <td><span class="badge" style="background:${cfg.color}22;color:${cfg.color}">${cfg.label}</span></td>
                     <td style="font-weight:600">${fmt(c.properties.arr)}</td>
                     <td>${fmt(c.properties.mrr || c.properties.monthly_recurring_revenue_mrr)}</td>
+                    <td>${esc(REST_TYPE_LABELS[c.properties.industrytype] || c.properties.industrytype || '—')}</td>
+                    <td>${days < 999 ? days + 'd ago' : 'Never'}</td>
+                    <td>${esc(owners[c.properties.hubspot_owner_id] || '—')}</td>
+                  </tr>`;
+                }).join('')}
+              </tbody>
+            </table>
+          </div>
+        </div>` : ''}
+
+        ${silent.length > 0 ? `<div class="card" style="border-left:4px solid var(--amber)">
+          <div class="card-header"><h3 style="color:var(--amber)">Silent Customers — Active but No Contact in 30+ Days</h3></div>
+          <div class="card-body" style="padding:0;overflow-x:auto">
+            <table>
+              <thead><tr><th>Company</th><th>ARR</th><th>Days Since Contact</th><th>Health</th><th>Type</th><th>Owner</th></tr></thead>
+              <tbody>
+                ${silent.slice(0, 20).map(c => {
+                  const days = daysSince(c.properties.notes_last_contacted);
+                  return `<tr>
+                    <td style="font-weight:700">${esc(c.properties.name || '—')}</td>
+                    <td style="font-weight:600">${fmt(c.properties.arr)}</td>
+                    <td style="font-weight:700;color:${days > 45 ? 'var(--red)' : 'var(--amber)'}">${days < 999 ? days + ' days' : 'Never'}</td>
+                    <td>${healthBadge(days)}</td>
+                    <td>${esc(REST_TYPE_LABELS[c.properties.industrytype] || c.properties.industrytype || '—')}</td>
+                    <td>${esc(owners[c.properties.hubspot_owner_id] || '—')}</td>
+                  </tr>`;
+                }).join('')}
+              </tbody>
+            </table>
+          </div>
+        </div>` : ''}
+
+        ${zeroARR.length > 0 ? `<div class="card" style="border-left:4px solid var(--purple)">
+          <div class="card-header"><h3 style="color:var(--purple)">Active with $0 ARR — Needs Revenue Setup (${zeroARR.length})</h3></div>
+          <div class="card-body" style="padding:0;overflow-x:auto">
+            <table>
+              <thead><tr><th>Company</th><th>Activated</th><th>Last Contact</th><th>Owner</th></tr></thead>
+              <tbody>
+                ${zeroARR.map(c => `<tr>
+                  <td style="font-weight:700">${esc(c.properties.name || '—')}</td>
+                  <td>${c.properties.activation_date ? new Date(c.properties.activation_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '—'}</td>
+                  <td>${daysSince(c.properties.notes_last_contacted) < 999 ? daysSince(c.properties.notes_last_contacted) + 'd ago' : 'Never'}</td>
+                  <td>${esc(owners[c.properties.hubspot_owner_id] || '—')}</td>
+                </tr>`).join('')}
+              </tbody>
+            </table>
+          </div>
+        </div>` : ''}
+
+        ${churned.length > 0 ? `<div class="card" style="border-left:4px solid var(--muted)">
+          <div class="card-header"><h3>Churned / Expired (${churned.length}) — ${fmt(churnedARR)} ARR Lost</h3></div>
+          <div class="card-body" style="padding:0;overflow-x:auto;max-height:300px;overflow-y:auto">
+            <table>
+              <thead><tr><th>Company</th><th>Status</th><th>ARR Was</th><th>Type</th><th>Cuisine</th><th>Owner</th></tr></thead>
+              <tbody>
+                ${churned.sort((a,b) => (parseFloat(b.properties.arr)||0) - (parseFloat(a.properties.arr)||0)).map(c => {
+                  const s = c.properties.subscription_status;
+                  const cfg = SUB_STATUS_CONFIG[s] || { label: s, color: '#999' };
+                  return `<tr>
+                    <td style="font-weight:700">${esc(c.properties.name || '—')}</td>
+                    <td><span class="badge" style="background:${cfg.color}22;color:${cfg.color}">${cfg.label}</span></td>
+                    <td style="color:var(--muted)">${fmt(c.properties.arr)}</td>
+                    <td>${esc(REST_TYPE_LABELS[c.properties.industrytype] || c.properties.industrytype || '—')}</td>
+                    <td>${esc(c.properties.cuisine_type || '—')}</td>
                     <td>${esc(owners[c.properties.hubspot_owner_id] || '—')}</td>
                   </tr>`;
                 }).join('')}
@@ -2553,23 +2742,22 @@ const App = (() => {
         </div>` : ''}
 
         <div class="card">
-          <div class="card-header"><h3>All Subscriptions</h3></div>
+          <div class="card-header"><h3>All Active Customers (${active.length})</h3></div>
           <div class="card-body" style="padding:0;overflow-x:auto;max-height:600px;overflow-y:auto">
             <table>
-              <thead><tr><th>Company</th><th>Status</th><th>ARR</th><th>MRR</th><th>Adyen ARR</th><th>Owner</th></tr></thead>
+              <thead><tr><th>Company</th><th>ARR</th><th>MRR</th><th>Adyen ARR</th><th>Type</th><th>Cuisine</th><th>Health</th><th>Last Contact</th><th>Owner</th></tr></thead>
               <tbody>
-                ${all.sort((a, b) => {
-                  const order = ['active','scheduled','past_due','unpaid','paused','canceled','expired'];
-                  return order.indexOf(a.properties.subscription_status) - order.indexOf(b.properties.subscription_status);
-                }).map(c => {
-                  const s = c.properties.subscription_status;
-                  const cfg = SUB_STATUS_CONFIG[s] || { label: s, color: '#999' };
+                ${active.sort((a, b) => (parseFloat(b.properties.arr) || 0) - (parseFloat(a.properties.arr) || 0)).map(c => {
+                  const days = daysSince(c.properties.notes_last_contacted);
                   return `<tr>
                     <td style="font-weight:700">${esc(c.properties.name || '—')}</td>
-                    <td><span class="badge" style="background:${cfg.color}22;color:${cfg.color}">${cfg.label}</span></td>
-                    <td style="font-weight:600">${fmt(c.properties.arr)}</td>
+                    <td style="font-weight:700;color:var(--green)">${fmt(c.properties.arr)}</td>
                     <td>${fmt(c.properties.mrr || c.properties.monthly_recurring_revenue_mrr)}</td>
                     <td>${fmt(c.properties.adyen_processing_arr)}</td>
+                    <td>${esc(REST_TYPE_LABELS[c.properties.industrytype] || c.properties.industrytype || '—')}</td>
+                    <td>${esc(c.properties.cuisine_type || '—')}</td>
+                    <td>${healthBadge(days)}</td>
+                    <td>${days < 999 ? days + 'd ago' : 'Never'}</td>
                     <td>${esc(owners[c.properties.hubspot_owner_id] || '—')}</td>
                   </tr>`;
                 }).join('')}
@@ -2578,7 +2766,8 @@ const App = (() => {
           </div>
         </div>
       `;
-      $('sub-donut').innerHTML = buildDonut(donutData);
+      $('sub-donut').innerHTML = buildDonut(statusDonut);
+      $('sub-cuisine-donut').innerHTML = buildDonut(cuisineDonut);
     } catch (e) {
       $('content').innerHTML = `<div class="loading-state" style="color:var(--red)">Error: ${esc(e.message)}</div>`;
     }
