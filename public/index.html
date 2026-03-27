@@ -190,6 +190,10 @@
   @keyframes spin { to { transform: rotate(360deg); } }
   .loading-state { display: flex; align-items: center; justify-content: center; gap: 10px; padding: 60px; color: var(--muted); font-size: 14px; }
 
+  /* ─── User Management ─── */
+  .user-add-form { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+  .user-add-form input[type="text"], .user-add-form input[type="password"] { flex: 0 0 auto; }
+
   /* ─── Responsive ─── */
   /* ─── Date Filter ─── */
   .date-filter { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
@@ -256,7 +260,8 @@
       <a href="#" data-view="contacts"><i class="icon">&#x1f4c7;</i><span>Contacts</span></a>
       <a href="#" data-view="companies"><i class="icon">&#x1f3e2;</i><span>Companies</span></a>
       <div class="nav-label" style="margin-top:8px">System</div>
-      <a href="#" onclick="App.disconnect(); return false;"><i class="icon">&#x1f511;</i><span>Disconnect</span></a>
+      <a href="#" data-view="users" id="nav-users" class="hidden"><i class="icon">&#x1f465;</i><span>Manage Users</span></a>
+      <a href="#" onclick="App.disconnect(); return false;"><i class="icon">&#x1f6aa;</i><span>Sign Out</span></a>
     </nav>
     <div class="sidebar-footer"><span class="dot"></span>Connected</div>
   </div>
@@ -293,6 +298,7 @@
 const App = (() => {
   let sessionToken = localStorage.getItem('aio_session') || '';
   let currentUser = localStorage.getItem('aio_user') || '';
+  let isAdmin = localStorage.getItem('aio_admin') === 'true';
   let cache = {};
   let currentView = 'dashboard';
   let owners = {};
@@ -396,8 +402,10 @@ const App = (() => {
       if (!res.ok) throw new Error(data.error || 'Login failed');
       sessionToken = data.token;
       currentUser = data.user;
+      isAdmin = !!data.isAdmin;
       localStorage.setItem('aio_session', sessionToken);
       localStorage.setItem('aio_user', currentUser);
+      localStorage.setItem('aio_admin', isAdmin ? 'true' : 'false');
       owners = {};
       try {
         const ownRes = await api('crm/v3/owners?limit=100');
@@ -409,15 +417,18 @@ const App = (() => {
       $('auth-error').classList.remove('hidden');
       sessionToken = '';
       currentUser = '';
+      isAdmin = false;
     }
   }
 
   function disconnect() {
     sessionToken = '';
     currentUser = '';
+    isAdmin = false;
     cache = {};
     localStorage.removeItem('aio_session');
     localStorage.removeItem('aio_user');
+    localStorage.removeItem('aio_admin');
     $('app').classList.add('hidden');
     $('auth-screen').classList.remove('hidden');
     $('login-username').value = '';
@@ -431,6 +442,9 @@ const App = (() => {
     // Show logged-in user in sidebar
     const footer = document.querySelector('#sidebar .sidebar-footer');
     if (footer) footer.innerHTML = `<span class="dot"></span>Signed in as <strong>${currentUser}</strong>`;
+    // Show admin nav if admin
+    const navUsers = $('nav-users');
+    if (navUsers) navUsers.classList.toggle('hidden', !isAdmin);
     if (!Object.keys(owners).length) {
       try {
         const res = await api('crm/v3/owners?limit=100');
@@ -449,7 +463,7 @@ const App = (() => {
     cleanroom: 'Clean Your Room',
     health: 'Customer Health & Churn', geo: 'Geographic Performance',
     leadsource: 'Lead Source Analysis', tickets: 'Ticket Analytics',
-    contacts: 'Contacts Overview', companies: 'Companies Overview',
+    contacts: 'Contacts Overview', companies: 'Companies Overview', users: 'Manage Users',
   };
 
   function navigate(view) {
@@ -464,7 +478,7 @@ const App = (() => {
   function render() {
     const c = $('content');
     c.innerHTML = '<div class="loading-state"><div class="spinner"></div> Loading data...</div>';
-    const renderers = { dashboard: renderDashboard, revenue: renderRevenue, pipeline: renderPipeline, velocity: renderVelocity, reps: renderReps, scorecard: renderScorecard, repactivity: renderRepActivity, leaderboard: renderLeaderboard, cleanroom: renderCleanRoom, health: renderHealth, geo: renderGeo, leadsource: renderLeadSource, tickets: renderTickets, contacts: renderContacts, companies: renderCompanies };
+    const renderers = { dashboard: renderDashboard, revenue: renderRevenue, pipeline: renderPipeline, velocity: renderVelocity, reps: renderReps, scorecard: renderScorecard, repactivity: renderRepActivity, leaderboard: renderLeaderboard, cleanroom: renderCleanRoom, health: renderHealth, geo: renderGeo, leadsource: renderLeadSource, tickets: renderTickets, contacts: renderContacts, companies: renderCompanies, users: renderUsers };
     (renderers[currentView] || renderDashboard)();
   }
 
@@ -2115,6 +2129,107 @@ const App = (() => {
     return `<div class="donut-wrap">${svg}<div class="donut-legend">${legend}</div></div>`;
   }
 
+  // ── User Management ─────────────────────────────────────────
+  async function usersApi(method = 'GET', queryUser = '', body = null) {
+    const url = '/api/users' + (queryUser ? `?user=${encodeURIComponent(queryUser)}` : '');
+    const opts = { method, headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${sessionToken}` } };
+    if (body) opts.body = JSON.stringify(body);
+    const res = await fetch(url, opts);
+    if (res.status === 401) { disconnect(); return null; }
+    return res.json();
+  }
+
+  async function renderUsers() {
+    const c = $('content');
+    if (!isAdmin) { c.innerHTML = '<div class="card"><h3>Access Denied</h3><p>Admin access required.</p></div>'; return; }
+
+    c.innerHTML = '<div class="loading-state"><div class="spinner"></div> Loading users...</div>';
+    const data = await usersApi('GET');
+    if (!data || data.error) {
+      c.innerHTML = `<div class="card"><h3>Error</h3><p>${data ? data.error : 'Failed to load users'}</p></div>`;
+      return;
+    }
+
+    const users = data.users || [];
+    let html = `
+      <div class="card" style="margin-bottom:20px">
+        <h3 style="margin-bottom:16px">Add New User</h3>
+        <div class="user-add-form">
+          <input type="text" id="new-username" placeholder="Username" style="padding:10px 14px;border:2px solid var(--border);border-radius:8px;font-size:14px;width:180px">
+          <input type="password" id="new-password" placeholder="Password" style="padding:10px 14px;border:2px solid var(--border);border-radius:8px;font-size:14px;width:180px">
+          <label style="display:flex;align-items:center;gap:6px;font-size:13px;color:var(--muted)">
+            <input type="checkbox" id="new-isadmin"> Admin
+          </label>
+          <button class="btn-primary" onclick="App.addUser()" style="padding:10px 20px;border-radius:8px;font-size:13px;font-weight:600">Add User</button>
+        </div>
+        <div id="user-add-error" class="error hidden" style="margin-top:10px"></div>
+      </div>
+
+      <div class="card">
+        <h3 style="margin-bottom:16px">Users (${users.length})</h3>
+        <table class="data-table" style="width:100%">
+          <thead><tr><th>Username</th><th>Role</th><th>Source</th><th>Created By</th><th style="text-align:right">Actions</th></tr></thead>
+          <tbody>`;
+
+    users.forEach(u => {
+      const badge = u.isAdmin
+        ? '<span style="background:var(--purple);color:#fff;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600">ADMIN</span>'
+        : '<span style="background:var(--border);color:var(--muted);padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600">USER</span>';
+      const source = u.source === 'env'
+        ? '<span style="background:var(--amber);color:#fff;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600">SYSTEM</span>'
+        : '<span style="background:var(--blue);color:#fff;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600">MANAGED</span>';
+      const actions = u.source === 'env'
+        ? '<span style="color:var(--muted);font-size:12px">System admin — not editable</span>'
+        : `<button onclick="App.changePassword('${u.username}')" style="padding:4px 10px;border-radius:6px;font-size:12px;background:var(--blue);color:#fff;margin-right:6px">Password</button>
+           <button onclick="App.toggleAdmin('${u.username}', ${!u.isAdmin})" style="padding:4px 10px;border-radius:6px;font-size:12px;background:var(--purple);color:#fff;margin-right:6px">${u.isAdmin ? 'Remove Admin' : 'Make Admin'}</button>
+           <button onclick="App.deleteUser('${u.username}')" style="padding:4px 10px;border-radius:6px;font-size:12px;background:var(--red);color:#fff">Delete</button>`;
+      html += `<tr>
+        <td><strong>${u.username}</strong></td>
+        <td>${badge}</td>
+        <td>${source}</td>
+        <td>${u.createdBy || '—'}</td>
+        <td style="text-align:right">${actions}</td>
+      </tr>`;
+    });
+
+    html += '</tbody></table></div>';
+    c.innerHTML = html;
+  }
+
+  async function addUser() {
+    const username = $('new-username').value.trim();
+    const password = $('new-password').value.trim();
+    const makeAdmin = $('new-isadmin').checked;
+    const errEl = $('user-add-error');
+    errEl.classList.add('hidden');
+    if (!username || !password) { errEl.textContent = 'Username and password required'; errEl.classList.remove('hidden'); return; }
+    const res = await usersApi('POST', '', { username, password, isAdmin: makeAdmin });
+    if (!res || res.error) { errEl.textContent = res ? res.error : 'Failed to add user'; errEl.classList.remove('hidden'); return; }
+    renderUsers();
+  }
+
+  async function changePassword(username) {
+    const newPass = prompt(`Enter new password for ${username}:`);
+    if (!newPass) return;
+    if (newPass.length < 4) { alert('Password must be at least 4 characters'); return; }
+    const res = await usersApi('PUT', username, { password: newPass });
+    if (!res || res.error) { alert(res ? res.error : 'Failed to update password'); return; }
+    alert('Password updated');
+  }
+
+  async function toggleAdmin(username, makeAdmin) {
+    const res = await usersApi('PUT', username, { isAdmin: makeAdmin });
+    if (!res || res.error) { alert(res ? res.error : 'Failed to update role'); return; }
+    renderUsers();
+  }
+
+  async function deleteUser(username) {
+    if (!confirm(`Delete user "${username}"? This cannot be undone.`)) return;
+    const res = await usersApi('DELETE', username);
+    if (!res || res.error) { alert(res ? res.error : 'Failed to delete user'); return; }
+    renderUsers();
+  }
+
   // ── Event Listeners ──────────────────────────────────────────
   document.addEventListener('DOMContentLoaded', () => {
     document.querySelectorAll('#sidebar nav a[data-view]').forEach(a => {
@@ -2125,7 +2240,7 @@ const App = (() => {
     if (sessionToken) boot();
   });
 
-  return { login, disconnect, refresh, navigate, setDatePreset, setCustomDate };
+  return { login, disconnect, refresh, navigate, setDatePreset, setCustomDate, addUser, changePassword, toggleAdmin, deleteUser };
 })();
 </script>
 </body>

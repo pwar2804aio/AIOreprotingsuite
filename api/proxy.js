@@ -1,24 +1,5 @@
 const https = require('https');
-const crypto = require('crypto');
-
-function validateSession(authHeader) {
-  if (!authHeader || !authHeader.startsWith('Bearer ')) return null;
-  try {
-    const decoded = Buffer.from(authHeader.slice(7), 'base64').toString();
-    const [username, expiry, hmac] = decoded.split(':');
-    if (!username || !expiry || !hmac) return null;
-
-    // Check expiry
-    if (Date.now() > parseInt(expiry)) return null;
-
-    // Verify HMAC
-    const secret = process.env.APP_SECRET || 'aio-reports-default-secret';
-    const expected = crypto.createHmac('sha256', secret).update(`${username}:${expiry}`).digest('hex');
-    if (hmac !== expected) return null;
-
-    return username;
-  } catch { return null; }
-}
+const { validateSession } = require('./_auth');
 
 module.exports = async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
