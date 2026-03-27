@@ -55,8 +55,11 @@
   #sidebar nav a:hover { background: var(--sidebar-hover); color: #fff; }
   #sidebar nav a.active { background: var(--sidebar-active); color: #fff; }
   #sidebar nav a .icon { width: 20px; text-align: center; font-style: normal; font-size: 15px; }
+  .filter-bar { overflow: visible !important; position: relative; z-index: 100; }
+  .multi-dd { position: relative; z-index: 200; }
   .multi-dd .multi-dd-list { display: none !important; }
-  .multi-dd.open .multi-dd-list { display: block !important; }
+  .multi-dd.open { z-index: 9999; }
+  .multi-dd.open .multi-dd-list { display: block !important; position: absolute; top: 100%; left: 0; z-index: 9999; }
   #sidebar .sidebar-footer {
     padding: 16px 20px; border-top: 1px solid rgba(255,255,255,.08);
     font-size: 11px; color: rgba(255,255,255,.3);
@@ -2646,7 +2649,7 @@ const App = (() => {
       if (leadsFilterReps.length > 0) activeFilters.push('Reps: ' + leadsFilterReps.map(r => r === '__unassigned__' ? 'Unassigned' : (owners[r] || r)).join(', '));
 
       $('content').innerHTML = `
-        <div class="card" style="margin-bottom:20px;padding:16px 20px;display:flex;align-items:center;gap:16px;flex-wrap:wrap">
+        <div class="card filter-bar" style="margin-bottom:20px;padding:16px 20px;display:flex;align-items:center;gap:16px;flex-wrap:wrap">
           <span style="font-weight:700;font-size:13px;color:var(--muted)">Filters:</span>
           <div style="position:relative;display:inline-block" class="multi-dd">
             <button onclick="this.parentElement.classList.toggle('open')" style="padding:7px 14px;border-radius:8px;border:1px solid var(--border);font-size:13px;background:var(--card);min-width:180px;text-align:left;display:flex;justify-content:space-between;align-items:center;cursor:pointer">
