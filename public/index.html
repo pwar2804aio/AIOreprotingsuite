@@ -238,15 +238,25 @@
       <small>CRM Analytics Dashboard</small>
     </div>
     <nav>
-      <div class="nav-label">Reports</div>
+      <div class="nav-label">Overview</div>
       <a href="#" data-view="dashboard" class="active"><i class="icon">&#x1f4ca;</i><span>Dashboard</span></a>
-      <a href="#" data-view="pipeline"><i class="icon">&#x1f3af;</i><span>Sales Pipeline</span></a>
+      <a href="#" data-view="revenue"><i class="icon">&#x1f4b0;</i><span>Revenue</span></a>
+      <div class="nav-label">Sales</div>
+      <a href="#" data-view="pipeline"><i class="icon">&#x1f3af;</i><span>Pipeline</span></a>
+      <a href="#" data-view="velocity"><i class="icon">&#x26a1;</i><span>Sales Velocity</span></a>
       <a href="#" data-view="reps"><i class="icon">&#x1f465;</i><span>Deals by Rep</span></a>
+      <a href="#" data-view="scorecard"><i class="icon">&#x1f3c6;</i><span>Rep Scorecard</span></a>
       <a href="#" data-view="repactivity"><i class="icon">&#x1f4c5;</i><span>Rep Activity</span></a>
-      <a href="#" data-view="tickets"><i class="icon">&#x1f3ab;</i><span>Ticket Analytics</span></a>
+      <a href="#" data-view="leaderboard"><i class="icon">&#x1f525;</i><span>Activity Board</span></a>
+      <div class="nav-label">Analytics</div>
+      <a href="#" data-view="health"><i class="icon">&#x1f49a;</i><span>Customer Health</span></a>
+      <a href="#" data-view="geo"><i class="icon">&#x1f4cd;</i><span>Geographic</span></a>
+      <a href="#" data-view="leadsource"><i class="icon">&#x1f517;</i><span>Lead Sources</span></a>
+      <a href="#" data-view="tickets"><i class="icon">&#x1f3ab;</i><span>Tickets</span></a>
+      <div class="nav-label">Data</div>
       <a href="#" data-view="contacts"><i class="icon">&#x1f4c7;</i><span>Contacts</span></a>
       <a href="#" data-view="companies"><i class="icon">&#x1f3e2;</i><span>Companies</span></a>
-      <div class="nav-label" style="margin-top:12px">System</div>
+      <div class="nav-label" style="margin-top:8px">System</div>
       <a href="#" onclick="App.disconnect(); return false;"><i class="icon">&#x1f511;</i><span>Disconnect</span></a>
     </nav>
     <div class="sidebar-footer"><span class="dot"></span>Connected</div>
@@ -418,9 +428,12 @@ const App = (() => {
 
   // ── Navigation ───────────────────────────────────────────────
   const VIEW_TITLES = {
-    dashboard: 'Dashboard', pipeline: 'Sales Pipeline',
-    reps: 'Deals by Rep', repactivity: 'Rep Activity',
-    tickets: 'Ticket Analytics',
+    dashboard: 'Dashboard', revenue: 'Revenue Dashboard',
+    pipeline: 'Sales Pipeline', velocity: 'Sales Velocity & Funnel',
+    reps: 'Deals by Rep', scorecard: 'Rep Scorecard',
+    repactivity: 'Rep Activity', leaderboard: 'Activity Leaderboard',
+    health: 'Customer Health & Churn', geo: 'Geographic Performance',
+    leadsource: 'Lead Source Analysis', tickets: 'Ticket Analytics',
     contacts: 'Contacts Overview', companies: 'Companies Overview',
   };
 
@@ -436,7 +449,7 @@ const App = (() => {
   function render() {
     const c = $('content');
     c.innerHTML = '<div class="loading-state"><div class="spinner"></div> Loading data...</div>';
-    const renderers = { dashboard: renderDashboard, pipeline: renderPipeline, reps: renderReps, repactivity: renderRepActivity, tickets: renderTickets, contacts: renderContacts, companies: renderCompanies };
+    const renderers = { dashboard: renderDashboard, revenue: renderRevenue, pipeline: renderPipeline, velocity: renderVelocity, reps: renderReps, scorecard: renderScorecard, repactivity: renderRepActivity, leaderboard: renderLeaderboard, health: renderHealth, geo: renderGeo, leadsource: renderLeadSource, tickets: renderTickets, contacts: renderContacts, companies: renderCompanies };
     (renderers[currentView] || renderDashboard)();
   }
 
@@ -636,6 +649,124 @@ const App = (() => {
     }
   }
 
+  // ── Revenue Dashboard ─────────────────────────────────────────
+  async function renderRevenue() {
+    try {
+      const deals = await getCachedSearch('deals_all', 'deals', ['dealstage','amount','hubspot_owner_id','dealname','closedate','hs_is_closed_won','hs_is_closed_lost','dealtype','createdate','hs_forecast_amount','hs_deal_stage_probability']);
+      const allDeals = deals.results;
+      const wonDeals = allDeals.filter(d => d.properties.hs_is_closed_won === 'true' || d.properties.dealstage === 'closedwon');
+      const lostDeals = allDeals.filter(d => d.properties.hs_is_closed_lost === 'true' || d.properties.dealstage === 'closedlost');
+      const openDeals = allDeals.filter(d => !['closedwon','closedlost','3060460231','3069369052'].includes(d.properties.dealstage));
+
+      const totalWon = wonDeals.reduce((s, d) => s + (parseFloat(d.properties.amount) || 0), 0);
+      const totalLost = lostDeals.reduce((s, d) => s + (parseFloat(d.properties.amount) || 0), 0);
+      const avgDealSize = wonDeals.length ? totalWon / wonDeals.length : 0;
+      const weightedPipeline = openDeals.reduce((s, d) => {
+        const amt = parseFloat(d.properties.amount) || 0;
+        const prob = parseFloat(d.properties.hs_deal_stage_probability) || 0;
+        return s + (amt * prob);
+      }, 0);
+      const totalPipeline = openDeals.reduce((s, d) => s + (parseFloat(d.properties.amount) || 0), 0);
+
+      // Revenue by rep
+      const repRevenue = {};
+      wonDeals.forEach(d => {
+        const oid = d.properties.hubspot_owner_id || 'unassigned';
+        repRevenue[oid] = (repRevenue[oid] || 0) + (parseFloat(d.properties.amount) || 0);
+      });
+      const repSorted = Object.entries(repRevenue).sort((a, b) => b[1] - a[1]);
+      const maxRev = repSorted[0]?.[1] || 1;
+
+      // New vs Existing
+      const newBiz = wonDeals.filter(d => d.properties.dealtype === 'newbusiness');
+      const existBiz = wonDeals.filter(d => d.properties.dealtype === 'existingbusiness');
+      const newRev = newBiz.reduce((s, d) => s + (parseFloat(d.properties.amount) || 0), 0);
+      const existRev = existBiz.reduce((s, d) => s + (parseFloat(d.properties.amount) || 0), 0);
+      const otherRev = totalWon - newRev - existRev;
+
+      // Monthly revenue trend
+      const monthlyRev = {};
+      wonDeals.forEach(d => {
+        const dt = d.properties.closedate || d.properties.createdate;
+        if (!dt) return;
+        const key = dt.slice(0, 7);
+        monthlyRev[key] = (monthlyRev[key] || 0) + (parseFloat(d.properties.amount) || 0);
+      });
+      const monthKeys = Object.keys(monthlyRev).sort();
+      const maxMonthRev = Math.max(...Object.values(monthlyRev), 1);
+
+      $('content').innerHTML = `
+        <div class="stats-row">
+          <div class="stat-card"><div class="label">Closed Won Revenue</div><div class="value green">${fmt(totalWon)}</div><div class="sub">${fmtN(wonDeals.length)} deals</div></div>
+          <div class="stat-card"><div class="label">Avg Deal Size</div><div class="value blue">${fmt(avgDealSize)}</div></div>
+          <div class="stat-card"><div class="label">Open Pipeline</div><div class="value">${fmt(totalPipeline)}</div><div class="sub">${fmtN(openDeals.length)} deals</div></div>
+          <div class="stat-card"><div class="label">Weighted Forecast</div><div class="value purple">${fmt(weightedPipeline)}</div><div class="sub">Probability-weighted</div></div>
+          <div class="stat-card"><div class="label">Lost Revenue</div><div class="value red">${fmt(totalLost)}</div><div class="sub">${fmtN(lostDeals.length)} deals</div></div>
+        </div>
+        <div style="display:grid; grid-template-columns: 1fr 1fr; gap: 20px;">
+          <div class="card">
+            <div class="card-header"><h3>Revenue by Rep</h3></div>
+            <div class="card-body">
+              <div class="bar-chart">
+                ${repSorted.filter(([id]) => id !== 'unassigned').map(([id, rev], i) => {
+                  const pct = (rev / maxRev * 100).toFixed(0);
+                  return `<div class="bar-row">
+                    <div class="bar-label">${esc(owners[id] || 'ID: ' + id)}</div>
+                    <div class="bar-track"><div class="bar-fill" style="width:${pct}%;background:${COLORS[i % COLORS.length]}"><span>${fmt(rev)}</span></div></div>
+                  </div>`;
+                }).join('')}
+              </div>
+            </div>
+          </div>
+          <div class="card">
+            <div class="card-header"><h3>New vs Existing Business</h3></div>
+            <div class="card-body" id="rev-biz-donut"></div>
+          </div>
+        </div>
+        ${monthKeys.length > 1 ? `<div class="card">
+          <div class="card-header"><h3>Revenue Trend</h3></div>
+          <div class="card-body">
+            <div class="bar-chart">
+              ${monthKeys.map((key, i) => {
+                const rev = monthlyRev[key];
+                const pct = (rev / maxMonthRev * 100).toFixed(0);
+                const label = new Date(key + '-01').toLocaleDateString('en-US', { month: 'short', year: '2-digit' });
+                return `<div class="bar-row">
+                  <div class="bar-label">${label}</div>
+                  <div class="bar-track"><div class="bar-fill" style="width:${pct}%;background:${COLORS[i % COLORS.length]}"><span>${fmt(rev)}</span></div></div>
+                </div>`;
+              }).join('')}
+            </div>
+          </div>
+        </div>` : ''}
+        <div class="card">
+          <div class="card-header"><h3>Closed Won Deals</h3></div>
+          <div class="card-body" style="padding:0; max-height:400px; overflow-y:auto;">
+            <table>
+              <thead><tr><th>Deal</th><th>Amount</th><th>Type</th><th>Rep</th><th>Close Date</th></tr></thead>
+              <tbody>
+                ${wonDeals.map(d => `<tr>
+                  <td style="font-weight:600">${esc(d.properties.dealname || '—')}</td>
+                  <td style="font-weight:700;color:var(--green)">${d.properties.amount ? fmt(d.properties.amount) : '—'}</td>
+                  <td>${esc(d.properties.dealtype === 'newbusiness' ? 'New' : d.properties.dealtype === 'existingbusiness' ? 'Existing' : '—')}</td>
+                  <td>${esc(owners[d.properties.hubspot_owner_id] || '—')}</td>
+                  <td>${d.properties.closedate ? new Date(d.properties.closedate).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : '—'}</td>
+                </tr>`).join('')}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      `;
+      const bizData = [];
+      if (newRev > 0) bizData.push({ label: 'New Business', value: newRev, color: '#4c6ef5' });
+      if (existRev > 0) bizData.push({ label: 'Existing Business', value: existRev, color: '#00c48c' });
+      if (otherRev > 0) bizData.push({ label: 'Unspecified', value: otherRev, color: '#999' });
+      $('rev-biz-donut').innerHTML = buildDonut(bizData.map(d => ({ ...d, label: `${d.label} (${fmt(d.value)})`, value: Math.round(d.value) })));
+    } catch (e) {
+      $('content').innerHTML = `<div class="loading-state" style="color:var(--red)">Error: ${esc(e.message)}</div>`;
+    }
+  }
+
   // ── Pipeline Report ──────────────────────────────────────────
   async function renderPipeline() {
     try {
@@ -706,6 +837,133 @@ const App = (() => {
           </div>
         </div>
       `;
+    } catch (e) {
+      $('content').innerHTML = `<div class="loading-state" style="color:var(--red)">Error: ${esc(e.message)}</div>`;
+    }
+  }
+
+  // ── Sales Velocity & Funnel ──────────────────────────────────
+  async function renderVelocity() {
+    try {
+      const deals = await getCachedSearch('deals_all', 'deals', ['dealstage','amount','hubspot_owner_id','dealname','closedate','hs_is_closed_won','hs_is_closed_lost','dealtype','createdate','days_to_close']);
+      const allDeals = deals.results;
+      const wonDeals = allDeals.filter(d => d.properties.hs_is_closed_won === 'true' || d.properties.dealstage === 'closedwon');
+      const lostDeals = allDeals.filter(d => d.properties.hs_is_closed_lost === 'true' || d.properties.dealstage === 'closedlost');
+      const openDeals = allDeals.filter(d => !['closedwon','closedlost','3060460231','3069369052'].includes(d.properties.dealstage));
+
+      // Stage counts for conversion funnel
+      const stageCounts = {};
+      STAGES.forEach(s => stageCounts[s.id] = 0);
+      allDeals.forEach(d => { stageCounts[d.properties.dealstage] = (stageCounts[d.properties.dealstage] || 0) + 1; });
+
+      // Conversion rates: cumulative deals that reached each stage or beyond
+      const stageOrder = STAGES.map(s => s.id);
+      const cumulativeCounts = [];
+      let runningTotal = allDeals.length;
+      // For funnel: how many deals entered at or passed through each stage
+      // Simpler approach: count deals currently at each stage as the funnel
+      const funnelStages = STAGES.filter(s => !['3060460231','3069369052'].includes(s.id));
+      const topCount = allDeals.length;
+
+      // Avg days to close for won deals
+      const daysToClose = wonDeals.map(d => parseInt(d.properties.days_to_close) || 0).filter(d => d > 0);
+      const avgDaysToClose = daysToClose.length ? (daysToClose.reduce((a, b) => a + b, 0) / daysToClose.length).toFixed(0) : '—';
+
+      // Deal aging: open deals and how long they've been open
+      const now = new Date();
+      const agingBuckets = { '0-7 days': 0, '8-14 days': 0, '15-30 days': 0, '31-60 days': 0, '60+ days': 0 };
+      openDeals.forEach(d => {
+        const created = new Date(d.properties.createdate);
+        const age = Math.floor((now - created) / 86400000);
+        if (age <= 7) agingBuckets['0-7 days']++;
+        else if (age <= 14) agingBuckets['8-14 days']++;
+        else if (age <= 30) agingBuckets['15-30 days']++;
+        else if (age <= 60) agingBuckets['31-60 days']++;
+        else agingBuckets['60+ days']++;
+      });
+      const agingColors = { '0-7 days': '#00c48c', '8-14 days': '#4c6ef5', '15-30 days': '#f5a623', '31-60 days': '#e8481e', '60+ days': '#c62828' };
+      const maxAging = Math.max(...Object.values(agingBuckets), 1);
+
+      const winRate = wonDeals.length + lostDeals.length > 0 ? ((wonDeals.length / (wonDeals.length + lostDeals.length)) * 100).toFixed(1) : '—';
+      const pipelineToClose = totalOpen > 0 && wonDeals.length > 0 ? (openDeals.length / wonDeals.length).toFixed(1) : '—';
+      const totalOpen = openDeals.reduce((s, d) => s + (parseFloat(d.properties.amount) || 0), 0);
+
+      $('content').innerHTML = `
+        <div class="stats-row">
+          <div class="stat-card"><div class="label">Avg Days to Close</div><div class="value blue">${avgDaysToClose}</div><div class="sub">Won deals only</div></div>
+          <div class="stat-card"><div class="label">Win Rate</div><div class="value ${parseFloat(winRate) > 40 ? 'green' : 'amber'}">${winRate}%</div></div>
+          <div class="stat-card"><div class="label">Total Deals Created</div><div class="value">${fmtN(allDeals.length)}</div></div>
+          <div class="stat-card"><div class="label">Deals Won</div><div class="value green">${fmtN(wonDeals.length)}</div></div>
+          <div class="stat-card"><div class="label">Deals Lost</div><div class="value red">${fmtN(lostDeals.length)}</div></div>
+        </div>
+        <div style="display:grid; grid-template-columns: 1fr 1fr; gap: 20px;">
+          <div class="card">
+            <div class="card-header"><h3>Deal Aging (Open Deals)</h3></div>
+            <div class="card-body">
+              <div class="bar-chart">
+                ${Object.entries(agingBuckets).map(([label, count]) => {
+                  const pct = (count / maxAging * 100).toFixed(0);
+                  return `<div class="bar-row">
+                    <div class="bar-label">${label}</div>
+                    <div class="bar-track"><div class="bar-fill" style="width:${pct}%;background:${agingColors[label]}"><span>${count}</span></div></div>
+                  </div>`;
+                }).join('')}
+              </div>
+            </div>
+          </div>
+          <div class="card">
+            <div class="card-header"><h3>Deal Outcome Split</h3></div>
+            <div class="card-body" id="velocity-outcome-donut"></div>
+          </div>
+        </div>
+        <div class="card">
+          <div class="card-header"><h3>Stage Conversion Funnel</h3></div>
+          <div class="card-body">
+            <div class="funnel">
+              ${funnelStages.map((s, i) => {
+                const count = stageCounts[s.id] || 0;
+                const pct = topCount > 0 ? (count / topCount * 100).toFixed(0) : 0;
+                return `<div class="funnel-stage">
+                  <div class="funnel-name">${esc(s.label)}</div>
+                  <div class="funnel-bar-wrap"><div class="funnel-bar" style="width:${pct}%; background:${s.color}"></div><div class="funnel-bar-label">${pct}%</div></div>
+                  <div class="funnel-count">${count}</div>
+                </div>`;
+              }).join('')}
+            </div>
+          </div>
+        </div>
+        <div class="card">
+          <div class="card-header"><h3>Stale Deals (30+ Days Open)</h3></div>
+          <div class="card-body" style="padding:0; max-height:400px; overflow-y:auto;">
+            <table>
+              <thead><tr><th>Deal</th><th>Stage</th><th>Amount</th><th>Rep</th><th>Days Open</th></tr></thead>
+              <tbody>
+                ${openDeals
+                  .map(d => ({ ...d, age: Math.floor((now - new Date(d.properties.createdate)) / 86400000) }))
+                  .filter(d => d.age >= 30)
+                  .sort((a, b) => b.age - a.age)
+                  .slice(0, 30)
+                  .map(d => {
+                    const stage = STAGE_MAP[d.properties.dealstage];
+                    const ageClass = d.age > 60 ? 'badge-red' : 'badge-amber';
+                    return `<tr>
+                      <td style="font-weight:600">${esc(d.properties.dealname || '—')}</td>
+                      <td><span class="badge" style="background:${stage?.color || '#999'}22; color:${stage?.color || '#999'}">${esc(stage?.label || '—')}</span></td>
+                      <td>${d.properties.amount ? fmt(d.properties.amount) : '—'}</td>
+                      <td>${esc(owners[d.properties.hubspot_owner_id] || '—')}</td>
+                      <td><span class="badge ${ageClass}">${d.age}d</span></td>
+                    </tr>`;
+                  }).join('') || '<tr><td colspan="5" style="text-align:center;color:var(--muted);padding:20px">No stale deals</td></tr>'}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      `;
+      const outcomeData = [];
+      if (wonDeals.length) outcomeData.push({ label: `Won (${wonDeals.length})`, value: wonDeals.length, color: '#00c48c' });
+      if (lostDeals.length) outcomeData.push({ label: `Lost (${lostDeals.length})`, value: lostDeals.length, color: '#e8481e' });
+      if (openDeals.length) outcomeData.push({ label: `Open (${openDeals.length})`, value: openDeals.length, color: '#4c6ef5' });
+      $('velocity-outcome-donut').innerHTML = buildDonut(outcomeData);
     } catch (e) {
       $('content').innerHTML = `<div class="loading-state" style="color:var(--red)">Error: ${esc(e.message)}</div>`;
     }
@@ -904,6 +1162,492 @@ const App = (() => {
 
       $('rep-activity-donut').innerHTML = buildDonut(
         Object.entries(outcomeCounts).filter(([,v]) => v > 0).map(([k, v]) => ({ label: k, value: v, color: outcomeColors[k] || '#999' }))
+      );
+    } catch (e) {
+      $('content').innerHTML = `<div class="loading-state" style="color:var(--red)">Error: ${esc(e.message)}</div>`;
+    }
+  }
+
+  // ── Rep Scorecard ────────────────────────────────────────────
+  async function renderScorecard() {
+    try {
+      const [deals, meetings, calls] = await Promise.all([
+        getCachedSearch('deals_all', 'deals', ['dealstage','amount','hubspot_owner_id','dealname','closedate','hs_is_closed_won','hs_is_closed_lost','createdate','days_to_close']),
+        getCachedSearch('meetings_all', 'meetings', ['hs_activity_type','hs_meeting_outcome','hubspot_owner_id','hs_meeting_start_time','hs_createdate'], [], [{ propertyName: 'hs_createdate', direction: 'DESCENDING' }]),
+        getCachedSearch('calls_all', 'calls', ['hs_activity_type','hs_call_status','hubspot_owner_id','hs_call_duration','hs_createdate','hs_timestamp'], [], [{ propertyName: 'hs_createdate', direction: 'DESCENDING' }]),
+      ]);
+
+      const reps = {};
+      const ensureRep = (id) => {
+        if (!reps[id]) reps[id] = { deals: 0, won: 0, lost: 0, open: 0, revenue: 0, wonRevenue: 0, demos: 0, siteVisits: 0, calls: 0, callsCompleted: 0, avgDaysToClose: 0, daysArr: [] };
+      };
+
+      deals.results.forEach(d => {
+        const oid = d.properties.hubspot_owner_id; if (!oid) return;
+        ensureRep(oid);
+        reps[oid].deals++;
+        const amt = parseFloat(d.properties.amount) || 0;
+        reps[oid].revenue += amt;
+        if (d.properties.hs_is_closed_won === 'true' || d.properties.dealstage === 'closedwon') {
+          reps[oid].won++; reps[oid].wonRevenue += amt;
+          const dtc = parseInt(d.properties.days_to_close); if (dtc > 0) reps[oid].daysArr.push(dtc);
+        } else if (d.properties.hs_is_closed_lost === 'true' || d.properties.dealstage === 'closedlost') {
+          reps[oid].lost++;
+        } else { reps[oid].open++; }
+      });
+
+      meetings.results.forEach(m => {
+        const oid = m.properties.hubspot_owner_id; if (!oid) return;
+        ensureRep(oid);
+        if (m.properties.hs_activity_type === 'Demo/Pitch') reps[oid].demos++;
+        if (m.properties.hs_activity_type === 'Site Visit') reps[oid].siteVisits++;
+      });
+
+      calls.results.forEach(c => {
+        const oid = c.properties.hubspot_owner_id; if (!oid) return;
+        ensureRep(oid);
+        reps[oid].calls++;
+        if (c.properties.hs_call_status === 'COMPLETED') reps[oid].callsCompleted++;
+      });
+
+      const sorted = Object.entries(reps).sort((a, b) => b[1].wonRevenue - a[1].wonRevenue);
+
+      $('content').innerHTML = `
+        <div class="stats-row">
+          <div class="stat-card"><div class="label">Active Reps</div><div class="value">${fmtN(sorted.length)}</div></div>
+          <div class="stat-card"><div class="label">Total Demos</div><div class="value blue">${fmtN(meetings.results.filter(m => m.properties.hs_activity_type === 'Demo/Pitch').length)}</div></div>
+          <div class="stat-card"><div class="label">Total Site Visits</div><div class="value purple">${fmtN(meetings.results.filter(m => m.properties.hs_activity_type === 'Site Visit').length)}</div></div>
+          <div class="stat-card"><div class="label">Total Calls</div><div class="value amber">${fmtN(calls.results.length)}</div></div>
+        </div>
+        <div class="card">
+          <div class="card-header"><h3>Rep Scorecard — All Metrics</h3></div>
+          <div class="card-body" style="padding:0; overflow-x:auto;">
+            <table>
+              <thead><tr>
+                <th>Rep</th><th>Deals</th><th>Won</th><th>Lost</th><th>Open</th><th>Win Rate</th>
+                <th>Revenue Won</th><th>Avg Cycle</th><th>Demos</th><th>Site Visits</th><th>Calls</th>
+              </tr></thead>
+              <tbody>
+                ${sorted.map(([id, r]) => {
+                  const wr = r.won + r.lost > 0 ? ((r.won / (r.won + r.lost)) * 100).toFixed(0) : '—';
+                  const wrClass = wr !== '—' ? (parseFloat(wr) >= 50 ? 'badge-green' : parseFloat(wr) >= 25 ? 'badge-amber' : 'badge-red') : 'badge-gray';
+                  const avgCycle = r.daysArr.length ? Math.round(r.daysArr.reduce((a, b) => a + b, 0) / r.daysArr.length) + 'd' : '—';
+                  return `<tr>
+                    <td style="font-weight:700">${esc(owners[id] || 'ID: ' + id)}</td>
+                    <td>${r.deals}</td>
+                    <td style="color:var(--green);font-weight:600">${r.won}</td>
+                    <td style="color:var(--red);font-weight:600">${r.lost}</td>
+                    <td>${r.open}</td>
+                    <td><span class="badge ${wrClass}">${wr}${wr !== '—' ? '%' : ''}</span></td>
+                    <td style="font-weight:700;color:var(--green)">${fmt(r.wonRevenue)}</td>
+                    <td>${avgCycle}</td>
+                    <td style="font-weight:600;color:var(--blue)">${r.demos}</td>
+                    <td style="font-weight:600;color:var(--purple)">${r.siteVisits}</td>
+                    <td>${r.calls}</td>
+                  </tr>`;
+                }).join('')}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      `;
+    } catch (e) {
+      $('content').innerHTML = `<div class="loading-state" style="color:var(--red)">Error: ${esc(e.message)}</div>`;
+    }
+  }
+
+  // ── Activity Leaderboard ─────────────────────────────────────
+  async function renderLeaderboard() {
+    try {
+      const [meetings, calls] = await Promise.all([
+        getCachedSearch('meetings_all', 'meetings', ['hs_activity_type','hs_meeting_outcome','hubspot_owner_id','hs_createdate'], [], [{ propertyName: 'hs_createdate', direction: 'DESCENDING' }]),
+        getCachedSearch('calls_all', 'calls', ['hs_activity_type','hs_call_status','hubspot_owner_id','hs_createdate','hs_timestamp'], [], [{ propertyName: 'hs_createdate', direction: 'DESCENDING' }]),
+      ]);
+
+      const reps = {};
+      const ensureRep = (id) => {
+        if (!reps[id]) reps[id] = { total: 0, demos: 0, siteVisits: 0, calls: 0, inbound: 0, outbound: 0, deployments: 0 };
+      };
+
+      meetings.results.forEach(m => {
+        const oid = m.properties.hubspot_owner_id; if (!oid) return;
+        ensureRep(oid);
+        reps[oid].total++;
+        const t = m.properties.hs_activity_type || '';
+        if (t === 'Demo/Pitch') reps[oid].demos++;
+        else if (t === 'Site Visit') reps[oid].siteVisits++;
+        else if (t === 'Inbound') reps[oid].inbound++;
+        else if (t === 'Outbound') reps[oid].outbound++;
+        else if (t === 'Deployment/Call Out') reps[oid].deployments++;
+      });
+
+      calls.results.forEach(c => {
+        const oid = c.properties.hubspot_owner_id; if (!oid) return;
+        ensureRep(oid);
+        reps[oid].total++;
+        reps[oid].calls++;
+      });
+
+      const sorted = Object.entries(reps).sort((a, b) => b[1].total - a[1].total);
+      const maxTotal = sorted[0]?.[1].total || 1;
+
+      // Activity type breakdown
+      const typeCounts = { 'Demo/Pitch': 0, 'Site Visit': 0, 'Calls': 0, 'Inbound': 0, 'Outbound': 0, 'Deployment': 0 };
+      sorted.forEach(([, r]) => {
+        typeCounts['Demo/Pitch'] += r.demos;
+        typeCounts['Site Visit'] += r.siteVisits;
+        typeCounts['Calls'] += r.calls;
+        typeCounts['Inbound'] += r.inbound;
+        typeCounts['Outbound'] += r.outbound;
+        typeCounts['Deployment'] += r.deployments;
+      });
+      const typeColors = { 'Demo/Pitch': '#4c6ef5', 'Site Visit': '#7c5cfc', 'Calls': '#f5a623', 'Inbound': '#00c48c', 'Outbound': '#2196f3', 'Deployment': '#e91e63' };
+
+      $('content').innerHTML = `
+        <div class="stats-row">
+          <div class="stat-card"><div class="label">Total Activities</div><div class="value">${fmtN(meetings.results.length + calls.results.length)}</div></div>
+          <div class="stat-card"><div class="label">Demos</div><div class="value blue">${fmtN(typeCounts['Demo/Pitch'])}</div></div>
+          <div class="stat-card"><div class="label">Site Visits</div><div class="value purple">${fmtN(typeCounts['Site Visit'])}</div></div>
+          <div class="stat-card"><div class="label">Calls</div><div class="value amber">${fmtN(typeCounts['Calls'])}</div></div>
+        </div>
+        <div style="display:grid; grid-template-columns: 1fr 1fr; gap: 20px;">
+          <div class="card">
+            <div class="card-header"><h3>Activity Leaderboard</h3></div>
+            <div class="card-body">
+              <div class="bar-chart">
+                ${sorted.filter(([id]) => owners[id]).slice(0, 15).map(([id, r], i) => {
+                  const pct = (r.total / maxTotal * 100).toFixed(0);
+                  return `<div class="bar-row">
+                    <div class="bar-label">${esc(owners[id] || id)}</div>
+                    <div class="bar-track"><div class="bar-fill" style="width:${pct}%;background:${COLORS[i % COLORS.length]}"><span>${r.total}</span></div></div>
+                  </div>`;
+                }).join('')}
+              </div>
+            </div>
+          </div>
+          <div class="card">
+            <div class="card-header"><h3>Activity Type Mix</h3></div>
+            <div class="card-body" id="leader-type-donut"></div>
+          </div>
+        </div>
+        <div class="card">
+          <div class="card-header"><h3>Detailed Activity Breakdown</h3></div>
+          <div class="card-body" style="padding:0; overflow-x:auto;">
+            <table>
+              <thead><tr><th>#</th><th>Rep</th><th>Total</th><th>Demos</th><th>Site Visits</th><th>Calls</th><th>Inbound</th><th>Outbound</th><th>Deployments</th></tr></thead>
+              <tbody>
+                ${sorted.filter(([id]) => owners[id]).map(([id, r], i) => `<tr>
+                  <td style="font-weight:800;color:${i < 3 ? 'var(--primary)' : 'var(--muted)'}">${i + 1}</td>
+                  <td style="font-weight:700">${esc(owners[id] || id)}</td>
+                  <td style="font-weight:800">${r.total}</td>
+                  <td style="color:var(--blue);font-weight:600">${r.demos}</td>
+                  <td style="color:var(--purple);font-weight:600">${r.siteVisits}</td>
+                  <td>${r.calls}</td>
+                  <td>${r.inbound}</td>
+                  <td>${r.outbound}</td>
+                  <td>${r.deployments}</td>
+                </tr>`).join('')}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      `;
+      $('leader-type-donut').innerHTML = buildDonut(
+        Object.entries(typeCounts).filter(([,v]) => v > 0).map(([k, v]) => ({ label: k, value: v, color: typeColors[k] || '#999' }))
+      );
+    } catch (e) {
+      $('content').innerHTML = `<div class="loading-state" style="color:var(--red)">Error: ${esc(e.message)}</div>`;
+    }
+  }
+
+  // ── Customer Health & Churn ──────────────────────────────────
+  async function renderHealth() {
+    try {
+      const [contacts, deals] = await Promise.all([
+        getCachedSearch('contacts_health', 'contacts', ['firstname','lastname','lifecyclestage','hubspot_owner_id','createdate','company']),
+        getCachedSearch('deals_all', 'deals', ['dealstage','amount','hubspot_owner_id','dealname','closedate','hs_is_closed_won','hs_is_closed_lost','createdate']),
+      ]);
+
+      const lcLabels = { lead: 'New Lead', '3320849115': 'Attempting', marketingqualifiedlead: 'Qualified', salesqualifiedlead: 'Sales Accepted', '3320710864': 'Disqualified', opportunity: 'Open Deal', customer: 'Deal Won', '3319615195': 'Onboarding', '3318740675': 'Deployed', '3318740676': 'Churned', '3320851165': 'Active' };
+      const lcColors = { lead: '#607d8b', '3320849115': '#2196f3', marketingqualifiedlead: '#00bcd4', salesqualifiedlead: '#4c6ef5', '3320710864': '#999', opportunity: '#f5a623', customer: '#8bc34a', '3319615195': '#7c5cfc', '3318740675': '#00c48c', '3318740676': '#e8481e', '3320851165': '#4caf50' };
+
+      const lcCounts = {};
+      contacts.results.forEach(c => {
+        const lc = c.properties.lifecyclestage || 'unknown';
+        lcCounts[lc] = (lcCounts[lc] || 0) + 1;
+      });
+
+      const deployed = lcCounts['3318740675'] || 0;
+      const churned = lcCounts['3318740676'] || 0;
+      const onboarding = lcCounts['3319615195'] || 0;
+      const active = lcCounts['3320851165'] || 0;
+      const churnRate = deployed + churned + active > 0 ? ((churned / (deployed + churned + active)) * 100).toFixed(1) : '—';
+
+      // Deal-based: deployed, onboarding, churned, cancelled
+      const deployedDeals = deals.results.filter(d => d.properties.dealstage === '2986384064');
+      const onboardingDeals = deals.results.filter(d => d.properties.dealstage === '2992070353');
+      const installDeals = deals.results.filter(d => d.properties.dealstage === '2986384063');
+      const churnedDeals = deals.results.filter(d => d.properties.dealstage === '3069369052');
+      const cancelledDeals = deals.results.filter(d => d.properties.dealstage === '3060460231');
+
+      // Customer journey funnel (contact lifecycle)
+      const journeyStages = ['lead', '3320849115', 'marketingqualifiedlead', 'salesqualifiedlead', 'opportunity', 'customer', '3319615195', '3318740675', '3320851165'];
+      const maxLC = Math.max(...journeyStages.map(s => lcCounts[s] || 0), 1);
+
+      $('content').innerHTML = `
+        <div class="stats-row">
+          <div class="stat-card"><div class="label">Deployed</div><div class="value green">${fmtN(deployed)}</div><div class="sub">contacts</div></div>
+          <div class="stat-card"><div class="label">Active</div><div class="value green">${fmtN(active)}</div></div>
+          <div class="stat-card"><div class="label">Onboarding</div><div class="value purple">${fmtN(onboarding)}</div></div>
+          <div class="stat-card"><div class="label">Churned</div><div class="value red">${fmtN(churned)}</div></div>
+          <div class="stat-card"><div class="label">Churn Rate</div><div class="value ${parseFloat(churnRate) > 15 ? 'red' : 'amber'}">${churnRate}%</div><div class="sub">of deployed+active</div></div>
+        </div>
+        <div style="display:grid; grid-template-columns: 1fr 1fr; gap: 20px;">
+          <div class="card">
+            <div class="card-header"><h3>Customer Lifecycle Funnel</h3></div>
+            <div class="card-body">
+              <div class="funnel">
+                ${journeyStages.map(s => {
+                  const count = lcCounts[s] || 0;
+                  const pct = (count / maxLC * 100).toFixed(0);
+                  return `<div class="funnel-stage">
+                    <div class="funnel-name">${esc(lcLabels[s] || s)}</div>
+                    <div class="funnel-bar-wrap"><div class="funnel-bar" style="width:${pct}%; background:${lcColors[s] || '#999'}"></div></div>
+                    <div class="funnel-count">${fmtN(count)}</div>
+                  </div>`;
+                }).join('')}
+              </div>
+            </div>
+          </div>
+          <div class="card">
+            <div class="card-header"><h3>Lifecycle Distribution</h3></div>
+            <div class="card-body" id="health-lc-donut"></div>
+          </div>
+        </div>
+        <div style="display:grid; grid-template-columns: 1fr 1fr; gap: 20px;">
+          <div class="card">
+            <div class="card-header"><h3>Deal Pipeline Health</h3></div>
+            <div class="card-body">
+              <div class="bar-chart">
+                ${[
+                  { label: 'Onboarding', count: onboardingDeals.length, color: '#7c5cfc' },
+                  { label: 'Install/Training', count: installDeals.length, color: '#9c27b0' },
+                  { label: 'Deployed', count: deployedDeals.length, color: '#00c48c' },
+                  { label: 'Churned', count: churnedDeals.length, color: '#e8481e' },
+                  { label: 'Cancelled Before Live', count: cancelledDeals.length, color: '#c62828' },
+                ].map(s => {
+                  const max = Math.max(onboardingDeals.length, installDeals.length, deployedDeals.length, churnedDeals.length, cancelledDeals.length, 1);
+                  const pct = (s.count / max * 100).toFixed(0);
+                  return `<div class="bar-row">
+                    <div class="bar-label">${s.label}</div>
+                    <div class="bar-track"><div class="bar-fill" style="width:${pct}%;background:${s.color}"><span>${s.count}</span></div></div>
+                  </div>`;
+                }).join('')}
+              </div>
+            </div>
+          </div>
+          <div class="card">
+            <div class="card-header"><h3>Churned Deals</h3></div>
+            <div class="card-body" style="padding:0; max-height:300px; overflow-y:auto;">
+              <table>
+                <thead><tr><th>Deal</th><th>Amount</th><th>Rep</th></tr></thead>
+                <tbody>
+                  ${churnedDeals.concat(cancelledDeals).map(d => `<tr>
+                    <td style="font-weight:600">${esc(d.properties.dealname || '—')}</td>
+                    <td>${d.properties.amount ? fmt(d.properties.amount) : '—'}</td>
+                    <td>${esc(owners[d.properties.hubspot_owner_id] || '—')}</td>
+                  </tr>`).join('') || '<tr><td colspan="3" style="text-align:center;color:var(--muted);padding:20px">No churned deals</td></tr>'}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      `;
+      $('health-lc-donut').innerHTML = buildDonut(
+        Object.entries(lcCounts).filter(([k, v]) => v > 0 && k !== 'unknown').sort((a, b) => b[1] - a[1]).map(([k, v]) => ({ label: lcLabels[k] || k, value: v, color: lcColors[k] || '#999' }))
+      );
+    } catch (e) {
+      $('content').innerHTML = `<div class="loading-state" style="color:var(--red)">Error: ${esc(e.message)}</div>`;
+    }
+  }
+
+  // ── Geographic Performance ───────────────────────────────────
+  async function renderGeo() {
+    try {
+      const [companies, deals] = await Promise.all([
+        getCachedSearch('companies_recent', 'companies', ['name','city','state','industry','lifecyclestage','hubspot_owner_id','createdate','num_associated_deals']),
+        getCachedSearch('deals_all', 'deals', ['dealstage','amount','hubspot_owner_id','dealname','hs_is_closed_won','createdate']),
+      ]);
+
+      // Companies by city
+      const cityCounts = {};
+      companies.results.forEach(c => {
+        const city = c.properties.city || 'Unknown';
+        if (!cityCounts[city]) cityCounts[city] = { companies: 0, withDeals: 0 };
+        cityCounts[city].companies++;
+        if (parseInt(c.properties.num_associated_deals) > 0) cityCounts[city].withDeals++;
+      });
+      const cityEntries = Object.entries(cityCounts).sort((a, b) => b[1].companies - a[1].companies);
+      const topCities = cityEntries.filter(([k]) => k !== 'Unknown').slice(0, 15);
+      const maxCity = topCities[0]?.[1].companies || 1;
+
+      // Companies by state
+      const stateCounts = {};
+      companies.results.forEach(c => {
+        const state = c.properties.state || 'Unknown';
+        stateCounts[state] = (stateCounts[state] || 0) + 1;
+      });
+
+      // Won deals by city (approximate via company name matching or owner)
+      const totalCities = cityEntries.filter(([k]) => k !== 'Unknown').length;
+      const citiesWithDeals = cityEntries.filter(([k, v]) => k !== 'Unknown' && v.withDeals > 0).length;
+
+      $('content').innerHTML = `
+        <div class="stats-row">
+          <div class="stat-card"><div class="label">Total Companies</div><div class="value">${fmtN(companies.total)}</div></div>
+          <div class="stat-card"><div class="label">Cities Covered</div><div class="value blue">${fmtN(totalCities)}</div></div>
+          <div class="stat-card"><div class="label">Cities with Deals</div><div class="value green">${fmtN(citiesWithDeals)}</div></div>
+          <div class="stat-card"><div class="label">Showing (Sample)</div><div class="value">${fmtN(companies.results.length)}</div></div>
+        </div>
+        <div style="display:grid; grid-template-columns: 1fr 1fr; gap: 20px;">
+          <div class="card">
+            <div class="card-header"><h3>Top Cities by Companies</h3></div>
+            <div class="card-body">
+              <div class="bar-chart">
+                ${topCities.map(([city, data], i) => {
+                  const pct = (data.companies / maxCity * 100).toFixed(0);
+                  return `<div class="bar-row">
+                    <div class="bar-label">${esc(city)}</div>
+                    <div class="bar-track"><div class="bar-fill" style="width:${pct}%;background:${COLORS[i % COLORS.length]}"><span>${data.companies}</span></div></div>
+                    <div class="bar-val">${data.withDeals > 0 ? data.withDeals + ' deals' : ''}</div>
+                  </div>`;
+                }).join('')}
+              </div>
+            </div>
+          </div>
+          <div class="card">
+            <div class="card-header"><h3>Top States</h3></div>
+            <div class="card-body" id="geo-state-donut"></div>
+          </div>
+        </div>
+        <div class="card">
+          <div class="card-header"><h3>City Performance Detail</h3></div>
+          <div class="card-body" style="padding:0; max-height:500px; overflow-y:auto;">
+            <table>
+              <thead><tr><th>City</th><th>Companies</th><th>With Deals</th><th>Deal %</th></tr></thead>
+              <tbody>
+                ${topCities.map(([city, data]) => {
+                  const dealPct = data.companies > 0 ? ((data.withDeals / data.companies) * 100).toFixed(0) : '0';
+                  const pctClass = parseFloat(dealPct) >= 30 ? 'badge-green' : parseFloat(dealPct) > 0 ? 'badge-amber' : 'badge-gray';
+                  return `<tr>
+                    <td style="font-weight:600">${esc(city)}</td>
+                    <td>${data.companies}</td>
+                    <td>${data.withDeals}</td>
+                    <td><span class="badge ${pctClass}">${dealPct}%</span></td>
+                  </tr>`;
+                }).join('')}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      `;
+      const stateEntries = Object.entries(stateCounts).filter(([k]) => k !== 'Unknown').sort((a, b) => b[1] - a[1]).slice(0, 10);
+      $('geo-state-donut').innerHTML = buildDonut(
+        stateEntries.map(([k, v], i) => ({ label: k, value: v, color: COLORS[i % COLORS.length] }))
+      );
+    } catch (e) {
+      $('content').innerHTML = `<div class="loading-state" style="color:var(--red)">Error: ${esc(e.message)}</div>`;
+    }
+  }
+
+  // ── Lead Source Analysis ─────────────────────────────────────
+  async function renderLeadSource() {
+    try {
+      const [contacts, deals] = await Promise.all([
+        getCachedSearch('contacts_source', 'contacts', ['firstname','lastname','hs_analytics_source','lifecyclestage','hubspot_owner_id','createdate']),
+        getCachedSearch('deals_all', 'deals', ['dealstage','amount','hubspot_owner_id','hs_analytics_source','hs_is_closed_won','hs_is_closed_lost','createdate']),
+      ]);
+
+      const sourceLabels = { ORGANIC_SEARCH: 'Organic Search', PAID_SEARCH: 'Paid Search', EMAIL_MARKETING: 'Email Marketing', SOCIAL_MEDIA: 'Organic Social', REFERRALS: 'Referrals', OTHER_CAMPAIGNS: 'Other Campaigns', DIRECT_TRAFFIC: 'Direct Traffic', OFFLINE: 'Offline Sources', PAID_SOCIAL: 'Paid Social', AI_REFERRALS: 'AI Referrals' };
+      const sourceColors = { ORGANIC_SEARCH: '#00c48c', PAID_SEARCH: '#4c6ef5', EMAIL_MARKETING: '#f5a623', SOCIAL_MEDIA: '#7c5cfc', REFERRALS: '#2196f3', OTHER_CAMPAIGNS: '#607d8b', DIRECT_TRAFFIC: '#e91e63', OFFLINE: '#ff9800', PAID_SOCIAL: '#00bcd4', AI_REFERRALS: '#8bc34a' };
+
+      // Contacts by source
+      const contactSources = {};
+      contacts.results.forEach(c => {
+        const src = c.properties.hs_analytics_source || 'Unknown';
+        contactSources[src] = (contactSources[src] || 0) + 1;
+      });
+
+      // Deals by source with won/lost
+      const dealSources = {};
+      deals.results.forEach(d => {
+        const src = d.properties.hs_analytics_source || 'Unknown';
+        if (!dealSources[src]) dealSources[src] = { total: 0, won: 0, lost: 0, revenue: 0 };
+        dealSources[src].total++;
+        if (d.properties.hs_is_closed_won === 'true' || d.properties.dealstage === 'closedwon') {
+          dealSources[src].won++;
+          dealSources[src].revenue += parseFloat(d.properties.amount) || 0;
+        } else if (d.properties.hs_is_closed_lost === 'true' || d.properties.dealstage === 'closedlost') {
+          dealSources[src].lost++;
+        }
+      });
+
+      const contactSourceEntries = Object.entries(contactSources).sort((a, b) => b[1] - a[1]);
+      const maxContactSrc = contactSourceEntries[0]?.[1] || 1;
+      const dealSourceEntries = Object.entries(dealSources).sort((a, b) => b[1].revenue - a[1].revenue);
+
+      $('content').innerHTML = `
+        <div class="stats-row">
+          <div class="stat-card"><div class="label">Contact Sources</div><div class="value">${fmtN(contactSourceEntries.filter(([k]) => k !== 'Unknown').length)}</div></div>
+          <div class="stat-card"><div class="label">Top Contact Source</div><div class="value blue" style="font-size:20px">${esc(sourceLabels[contactSourceEntries[0]?.[0]] || contactSourceEntries[0]?.[0] || '—')}</div><div class="sub">${fmtN(contactSourceEntries[0]?.[1] || 0)} contacts</div></div>
+          <div class="stat-card"><div class="label">Top Revenue Source</div><div class="value green" style="font-size:20px">${esc(sourceLabels[dealSourceEntries[0]?.[0]] || dealSourceEntries[0]?.[0] || '—')}</div><div class="sub">${fmt(dealSourceEntries[0]?.[1]?.revenue || 0)}</div></div>
+        </div>
+        <div style="display:grid; grid-template-columns: 1fr 1fr; gap: 20px;">
+          <div class="card">
+            <div class="card-header"><h3>Contacts by Source</h3></div>
+            <div class="card-body">
+              <div class="bar-chart">
+                ${contactSourceEntries.filter(([k]) => k !== 'Unknown').map(([src, count], i) => {
+                  const pct = (count / maxContactSrc * 100).toFixed(0);
+                  return `<div class="bar-row">
+                    <div class="bar-label">${esc(sourceLabels[src] || src)}</div>
+                    <div class="bar-track"><div class="bar-fill" style="width:${pct}%;background:${sourceColors[src] || COLORS[i % COLORS.length]}"><span>${fmtN(count)}</span></div></div>
+                  </div>`;
+                }).join('')}
+              </div>
+            </div>
+          </div>
+          <div class="card">
+            <div class="card-header"><h3>Contact Source Distribution</h3></div>
+            <div class="card-body" id="lead-source-donut"></div>
+          </div>
+        </div>
+        <div class="card">
+          <div class="card-header"><h3>Source → Deal Conversion</h3></div>
+          <div class="card-body" style="padding:0; overflow-x:auto;">
+            <table>
+              <thead><tr><th>Source</th><th>Contacts</th><th>Deals</th><th>Won</th><th>Lost</th><th>Win Rate</th><th>Revenue</th></tr></thead>
+              <tbody>
+                ${dealSourceEntries.filter(([k]) => k !== 'Unknown').map(([src, d]) => {
+                  const wr = d.won + d.lost > 0 ? ((d.won / (d.won + d.lost)) * 100).toFixed(0) : '—';
+                  const wrClass = wr !== '—' ? (parseFloat(wr) >= 50 ? 'badge-green' : parseFloat(wr) >= 25 ? 'badge-amber' : 'badge-red') : 'badge-gray';
+                  return `<tr>
+                    <td style="font-weight:600">${esc(sourceLabels[src] || src)}</td>
+                    <td>${fmtN(contactSources[src] || 0)}</td>
+                    <td>${d.total}</td>
+                    <td style="color:var(--green);font-weight:600">${d.won}</td>
+                    <td style="color:var(--red);font-weight:600">${d.lost}</td>
+                    <td><span class="badge ${wrClass}">${wr}${wr !== '—' ? '%' : ''}</span></td>
+                    <td style="font-weight:700;color:var(--green)">${fmt(d.revenue)}</td>
+                  </tr>`;
+                }).join('')}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      `;
+      $('lead-source-donut').innerHTML = buildDonut(
+        contactSourceEntries.filter(([k]) => k !== 'Unknown').slice(0, 8).map(([k, v]) => ({ label: sourceLabels[k] || k, value: v, color: sourceColors[k] || '#999' }))
       );
     } catch (e) {
       $('content').innerHTML = `<div class="loading-state" style="color:var(--red)">Error: ${esc(e.message)}</div>`;
