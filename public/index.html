@@ -55,6 +55,8 @@
   #sidebar nav a:hover { background: var(--sidebar-hover); color: #fff; }
   #sidebar nav a.active { background: var(--sidebar-active); color: #fff; }
   #sidebar nav a .icon { width: 20px; text-align: center; font-style: normal; font-size: 15px; }
+  .multi-dd .multi-dd-list { display: none !important; }
+  .multi-dd.open .multi-dd-list { display: block !important; }
   #sidebar .sidebar-footer {
     padding: 16px 20px; border-top: 1px solid rgba(255,255,255,.08);
     font-size: 11px; color: rgba(255,255,255,.3);
@@ -927,8 +929,8 @@ const App = (() => {
       const maxAging = Math.max(...Object.values(agingBuckets), 1);
 
       const winRate = wonDeals.length + lostDeals.length > 0 ? ((wonDeals.length / (wonDeals.length + lostDeals.length)) * 100).toFixed(1) : '—';
-      const pipelineToClose = totalOpen > 0 && wonDeals.length > 0 ? (openDeals.length / wonDeals.length).toFixed(1) : '—';
-      const totalOpen = openDeals.reduce((s, d) => s + (parseFloat(d.properties.amount) || 0), 0);
+      const totalOpenVal2 = openDeals.reduce((s, d) => s + (parseFloat(d.properties.amount) || 0), 0);
+      const pipelineToClose = totalOpenVal2 > 0 && wonDeals.length > 0 ? (openDeals.length / wonDeals.length).toFixed(1) : '—';
 
       $('content').innerHTML = `
         <div class="stats-row">
@@ -2459,11 +2461,24 @@ const App = (() => {
   }
 
   // ── New Leads ───────────────────────────────────────────────
-  let leadsFilterSource = '';
-  let leadsFilterRep = '';
+  let leadsFilterSources = []; // array for multi-select
+  let leadsFilterReps = [];    // array for multi-select
 
-  function setLeadsFilterSource(val) { leadsFilterSource = val; cache = {}; render(); }
-  function setLeadsFilterRep(val) { leadsFilterRep = val; cache = {}; render(); }
+  function toggleLeadsFilter(type, val) {
+    const arr = type === 'source' ? leadsFilterSources : leadsFilterReps;
+    const idx = arr.indexOf(val);
+    if (idx >= 0) arr.splice(idx, 1); else arr.push(val);
+    cache = {}; render();
+  }
+  function clearLeadsFilter(type) {
+    if (type === 'source') leadsFilterSources = [];
+    else if (type === 'rep') leadsFilterReps = [];
+    else { leadsFilterSources = []; leadsFilterReps = []; }
+    cache = {}; render();
+  }
+  // Keep old functions working
+  function setLeadsFilterSource(val) { leadsFilterSources = val ? [val] : []; cache = {}; render(); }
+  function setLeadsFilterRep(val) { leadsFilterReps = val ? [val] : []; cache = {}; render(); }
 
   async function renderNewLeads() {
     try {
@@ -2494,11 +2509,15 @@ const App = (() => {
       const allSources = [...new Set(rawAll.map(c => getSource(c)))].sort();
       const allRepIds = [...new Set(rawAll.filter(c => c.properties.hubspot_owner_id).map(c => c.properties.hubspot_owner_id))];
 
-      // Apply client-side filters
+      // Apply client-side filters (multi-select)
       let all = rawAll;
-      if (leadsFilterSource) all = all.filter(c => getSource(c) === leadsFilterSource);
-      if (leadsFilterRep === '__unassigned__') all = all.filter(c => !c.properties.hubspot_owner_id);
-      else if (leadsFilterRep) all = all.filter(c => c.properties.hubspot_owner_id === leadsFilterRep);
+      if (leadsFilterSources.length > 0) all = all.filter(c => leadsFilterSources.includes(getSource(c)));
+      if (leadsFilterReps.length > 0) {
+        all = all.filter(c => {
+          if (leadsFilterReps.includes('__unassigned__') && !c.properties.hubspot_owner_id) return true;
+          return leadsFilterReps.includes(c.properties.hubspot_owner_id);
+        });
+      }
 
       // Assigned vs unassigned
       const assigned = all.filter(c => c.properties.hubspot_owner_id);
@@ -2623,23 +2642,53 @@ const App = (() => {
 
       // Active filter labels
       const activeFilters = [];
-      if (leadsFilterSource) activeFilters.push('Source: ' + leadsFilterSource);
-      if (leadsFilterRep === '__unassigned__') activeFilters.push('Rep: Unassigned');
-      else if (leadsFilterRep) activeFilters.push('Rep: ' + (owners[leadsFilterRep] || leadsFilterRep));
+      if (leadsFilterSources.length > 0) activeFilters.push('Sources: ' + leadsFilterSources.join(', '));
+      if (leadsFilterReps.length > 0) activeFilters.push('Reps: ' + leadsFilterReps.map(r => r === '__unassigned__' ? 'Unassigned' : (owners[r] || r)).join(', '));
 
       $('content').innerHTML = `
         <div class="card" style="margin-bottom:20px;padding:16px 20px;display:flex;align-items:center;gap:16px;flex-wrap:wrap">
           <span style="font-weight:700;font-size:13px;color:var(--muted)">Filters:</span>
-          <select id="leads-source-filter" onchange="App.setLeadsFilterSource(this.value)" style="padding:7px 12px;border-radius:8px;border:1px solid var(--border);font-size:13px;background:var(--card);min-width:180px">
-            <option value="">All Lead Sources</option>
-            ${allSources.map(s => `<option value="${esc(s)}" ${leadsFilterSource === s ? 'selected' : ''}>${esc(s)}</option>`).join('')}
-          </select>
-          <select id="leads-rep-filter" onchange="App.setLeadsFilterRep(this.value)" style="padding:7px 12px;border-radius:8px;border:1px solid var(--border);font-size:13px;background:var(--card);min-width:180px">
-            <option value="">All Reps</option>
-            <option value="__unassigned__" ${leadsFilterRep === '__unassigned__' ? 'selected' : ''}>Unassigned</option>
-            ${allRepIds.sort((a,b) => (owners[a]||'').localeCompare(owners[b]||'')).map(id => `<option value="${id}" ${leadsFilterRep === id ? 'selected' : ''}>${esc(owners[id] || 'ID: ' + id)}</option>`).join('')}
-          </select>
-          ${activeFilters.length > 0 ? `<button onclick="App.setLeadsFilterSource('');App.setLeadsFilterRep('')" style="padding:6px 14px;border-radius:8px;background:var(--red);color:#fff;font-size:12px;font-weight:600">Clear Filters</button>
+          <div style="position:relative;display:inline-block" class="multi-dd">
+            <button onclick="this.parentElement.classList.toggle('open')" style="padding:7px 14px;border-radius:8px;border:1px solid var(--border);font-size:13px;background:var(--card);min-width:180px;text-align:left;display:flex;justify-content:space-between;align-items:center;cursor:pointer">
+              <span>${leadsFilterSources.length === 0 ? 'All Lead Sources' : leadsFilterSources.length + ' source' + (leadsFilterSources.length > 1 ? 's' : '') + ' selected'}</span>
+              <span style="font-size:10px;margin-left:8px">&#x25BC;</span>
+            </button>
+            <div class="multi-dd-list" style="display:none;position:absolute;top:100%;left:0;min-width:240px;max-height:280px;overflow-y:auto;background:var(--card);border:1px solid var(--border);border-radius:8px;box-shadow:var(--shadow-md);z-index:100;margin-top:4px">
+              ${leadsFilterSources.length > 0 ? `<div style="padding:8px 12px;border-bottom:1px solid var(--border)"><button onclick="App.clearLeadsFilter('source')" style="font-size:12px;color:var(--red);background:none;font-weight:600;padding:0">Clear all</button></div>` : ''}
+              ${allSources.map(s => {
+                const checked = leadsFilterSources.includes(s);
+                return `<label style="display:flex;align-items:center;gap:8px;padding:8px 12px;cursor:pointer;font-size:13px;border-bottom:1px solid var(--border);${checked ? 'background:var(--blue)08;font-weight:600' : ''}" onmouseenter="this.style.background='var(--bg)'" onmouseleave="this.style.background='${checked ? 'var(--blue)08' : ''}'">
+                  <input type="checkbox" ${checked ? 'checked' : ''} onchange="App.toggleLeadsFilter('source','${esc(s)}')" style="accent-color:var(--blue);width:16px;height:16px">
+                  <span>${esc(s)}</span>
+                  <span style="margin-left:auto;font-size:11px;color:var(--muted)">${sourceCounts[s] || 0}</span>
+                </label>`;
+              }).join('')}
+            </div>
+          </div>
+          <div style="position:relative;display:inline-block" class="multi-dd">
+            <button onclick="this.parentElement.classList.toggle('open')" style="padding:7px 14px;border-radius:8px;border:1px solid var(--border);font-size:13px;background:var(--card);min-width:180px;text-align:left;display:flex;justify-content:space-between;align-items:center;cursor:pointer">
+              <span>${leadsFilterReps.length === 0 ? 'All Reps' : leadsFilterReps.length + ' rep' + (leadsFilterReps.length > 1 ? 's' : '') + ' selected'}</span>
+              <span style="font-size:10px;margin-left:8px">&#x25BC;</span>
+            </button>
+            <div class="multi-dd-list" style="display:none;position:absolute;top:100%;left:0;min-width:220px;max-height:280px;overflow-y:auto;background:var(--card);border:1px solid var(--border);border-radius:8px;box-shadow:var(--shadow-md);z-index:100;margin-top:4px">
+              ${leadsFilterReps.length > 0 ? `<div style="padding:8px 12px;border-bottom:1px solid var(--border)"><button onclick="App.clearLeadsFilter('rep')" style="font-size:12px;color:var(--red);background:none;font-weight:600;padding:0">Clear all</button></div>` : ''}
+              <label style="display:flex;align-items:center;gap:8px;padding:8px 12px;cursor:pointer;font-size:13px;border-bottom:1px solid var(--border);${leadsFilterReps.includes('__unassigned__') ? 'background:var(--red)08;font-weight:600' : ''}" onmouseenter="this.style.background='var(--bg)'" onmouseleave="this.style.background='${leadsFilterReps.includes('__unassigned__') ? 'var(--red)08' : ''}'">
+                <input type="checkbox" ${leadsFilterReps.includes('__unassigned__') ? 'checked' : ''} onchange="App.toggleLeadsFilter('rep','__unassigned__')" style="accent-color:var(--red);width:16px;height:16px">
+                <span style="color:var(--red);font-weight:600">Unassigned</span>
+                <span style="margin-left:auto;font-size:11px;color:var(--muted)">${unassigned.length}</span>
+              </label>
+              ${allRepIds.sort((a,b) => (owners[a]||'').localeCompare(owners[b]||'')).map(id => {
+                const checked = leadsFilterReps.includes(id);
+                const repLeadCount = rawAll.filter(c => c.properties.hubspot_owner_id === id).length;
+                return `<label style="display:flex;align-items:center;gap:8px;padding:8px 12px;cursor:pointer;font-size:13px;border-bottom:1px solid var(--border);${checked ? 'background:var(--blue)08;font-weight:600' : ''}" onmouseenter="this.style.background='var(--bg)'" onmouseleave="this.style.background='${checked ? 'var(--blue)08' : ''}'">
+                  <input type="checkbox" ${checked ? 'checked' : ''} onchange="App.toggleLeadsFilter('rep','${id}')" style="accent-color:var(--blue);width:16px;height:16px">
+                  <span>${esc(owners[id] || 'ID: ' + id)}</span>
+                  <span style="margin-left:auto;font-size:11px;color:var(--muted)">${repLeadCount}</span>
+                </label>`;
+              }).join('')}
+            </div>
+          </div>
+          ${activeFilters.length > 0 ? `<button onclick="App.clearLeadsFilter('all')" style="padding:6px 14px;border-radius:8px;background:var(--red);color:#fff;font-size:12px;font-weight:600">Clear All</button>
           <span style="font-size:12px;color:var(--muted)">${activeFilters.join(' | ')}</span>` : ''}
         </div>
 
@@ -3307,7 +3356,14 @@ const App = (() => {
     if (sessionToken) boot();
   });
 
-  return { login, disconnect, refresh, navigate, setDatePreset, setCustomDate, setLeadsFilterSource, setLeadsFilterRep, addUser, changePassword, toggleAdmin, deleteUser };
+  // Close multi-select dropdowns when clicking outside
+  document.addEventListener('click', (e) => {
+    document.querySelectorAll('.multi-dd.open').forEach(dd => {
+      if (!dd.contains(e.target)) dd.classList.remove('open');
+    });
+  });
+
+  return { login, disconnect, refresh, navigate, setDatePreset, setCustomDate, setLeadsFilterSource, setLeadsFilterRep, toggleLeadsFilter, clearLeadsFilter, addUser, changePassword, toggleAdmin, deleteUser };
 })();
 </script>
 </body>
