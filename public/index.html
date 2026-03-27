@@ -312,7 +312,11 @@ const App = (() => {
       headers: { 'Content-Type': 'application/json', 'x-hubspot-token': token },
     };
     if (body) opts.body = JSON.stringify(body);
-    const res = await fetch(`/api/hubspot/${path}`, opts);
+    // Split path and query string, pass HubSpot path as hsPath param
+    const [basePath, qs] = path.split('?');
+    const params = new URLSearchParams(qs || '');
+    params.set('hsPath', basePath);
+    const res = await fetch(`/api/proxy?${params.toString()}`, opts);
     if (!res.ok) throw new Error(`API ${res.status}`);
     return res.json();
   }

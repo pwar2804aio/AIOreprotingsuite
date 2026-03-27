@@ -1,11 +1,11 @@
 {
   "version": 2,
   "builds": [
-    { "src": "api/hubspot/[...path].js", "use": "@vercel/node" },
+    { "src": "api/proxy.js", "use": "@vercel/node" },
     { "src": "public/**", "use": "@vercel/static" }
   ],
   "routes": [
-    { "src": "/api/hubspot/(.*)", "dest": "/api/hubspot/[...path]" },
+    { "src": "/api/proxy", "dest": "/api/proxy" },
     { "src": "/(.*)", "dest": "/public/$1" }
   ]
 }
