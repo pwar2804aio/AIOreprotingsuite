@@ -251,6 +251,10 @@
       <a href="#" data-view="repactivity"><i class="icon">&#x1f4c5;</i><span>Rep Activity</span></a>
       <a href="#" data-view="leaderboard"><i class="icon">&#x1f525;</i><span>Activity Board</span></a>
       <a href="#" data-view="cleanroom"><i class="icon">&#x1f9f9;</i><span>Clean Your Room</span></a>
+      <div class="nav-label">Targets</div>
+      <a href="#" data-view="quota"><i class="icon">&#x1f4c8;</i><span>Quota Tracker</span></a>
+      <a href="#" data-view="commission"><i class="icon">&#x1f4b5;</i><span>Commission</span></a>
+      <a href="#" data-view="activitygoals"><i class="icon">&#x1f3af;</i><span>Activity Goals</span></a>
       <div class="nav-label">Analytics</div>
       <a href="#" data-view="health"><i class="icon">&#x1f49a;</i><span>Customer Health</span></a>
       <a href="#" data-view="geo"><i class="icon">&#x1f4cd;</i><span>Geographic</span></a>
@@ -463,7 +467,9 @@ const App = (() => {
     cleanroom: 'Clean Your Room',
     health: 'Customer Health & Churn', geo: 'Geographic Performance',
     leadsource: 'Lead Source Analysis', tickets: 'Ticket Analytics',
-    contacts: 'Contacts Overview', companies: 'Companies Overview', users: 'Manage Users',
+    contacts: 'Contacts Overview', companies: 'Companies Overview',
+    quota: 'Quota Tracker', commission: 'Sales Commission', activitygoals: 'Activity Goals',
+    users: 'Manage Users',
   };
 
   function navigate(view) {
@@ -478,7 +484,7 @@ const App = (() => {
   function render() {
     const c = $('content');
     c.innerHTML = '<div class="loading-state"><div class="spinner"></div> Loading data...</div>';
-    const renderers = { dashboard: renderDashboard, revenue: renderRevenue, pipeline: renderPipeline, velocity: renderVelocity, reps: renderReps, scorecard: renderScorecard, repactivity: renderRepActivity, leaderboard: renderLeaderboard, cleanroom: renderCleanRoom, health: renderHealth, geo: renderGeo, leadsource: renderLeadSource, tickets: renderTickets, contacts: renderContacts, companies: renderCompanies, users: renderUsers };
+    const renderers = { dashboard: renderDashboard, revenue: renderRevenue, pipeline: renderPipeline, velocity: renderVelocity, reps: renderReps, scorecard: renderScorecard, repactivity: renderRepActivity, leaderboard: renderLeaderboard, cleanroom: renderCleanRoom, health: renderHealth, geo: renderGeo, leadsource: renderLeadSource, tickets: renderTickets, contacts: renderContacts, companies: renderCompanies, quota: renderQuota, commission: renderCommission, activitygoals: renderActivityGoals, users: renderUsers };
     (renderers[currentView] || renderDashboard)();
   }
 
@@ -2127,6 +2133,322 @@ const App = (() => {
     const legend = items.map(item => `<div class="donut-legend-item"><div class="donut-legend-color" style="background:${item.color}"></div>${esc(item.label)} <strong>(${item.value})</strong></div>`).join('');
 
     return `<div class="donut-wrap">${svg}<div class="donut-legend">${legend}</div></div>`;
+  }
+
+  // ── Quota Tracker ───────────────────────────────────────────
+  const MONTHLY_QUOTA = 48000; // $48K ARR per month
+  const PAYMENTS_ARR_DEFAULT = 2500;
+
+  async function renderQuota() {
+    try {
+      const deals = await getCachedSearch('deals_all', 'deals',
+        ['dealstage','amount','hubspot_owner_id','dealname','closedate','hs_is_closed_won','hs_is_closed_lost','dealtype','hs_arr']);
+
+      const wonDeals = deals.results.filter(d => d.properties.hs_is_closed_won === 'true' || d.properties.dealstage === 'closedwon');
+
+      // Group by rep and calculate ARR
+      const repQuota = {};
+      wonDeals.forEach(d => {
+        const oid = d.properties.hubspot_owner_id || 'unassigned';
+        if (!repQuota[oid]) repQuota[oid] = { arr: 0, deals: 0, payments: 0, dealList: [] };
+        const amount = parseFloat(d.properties.amount) || 0;
+        const arr = parseFloat(d.properties.hs_arr) || amount;
+        repQuota[oid].arr += arr;
+        repQuota[oid].deals++;
+        repQuota[oid].dealList.push(d);
+      });
+
+      const sorted = Object.entries(repQuota).sort((a, b) => b[1].arr - a[1].arr);
+      const totalARR = sorted.reduce((s, [, r]) => s + r.arr, 0);
+      const teamQuota = sorted.length * MONTHLY_QUOTA;
+      const teamPct = teamQuota > 0 ? (totalARR / teamQuota * 100) : 0;
+
+      $('content').innerHTML = `
+        <div class="stats-row">
+          <div class="stat-card"><div class="label">Monthly Quota</div><div class="value">${fmt(MONTHLY_QUOTA)}</div><div class="sub">Per AE per month</div></div>
+          <div class="stat-card"><div class="label">Team ARR Closed</div><div class="value green">${fmt(totalARR)}</div><div class="sub">${fmtN(wonDeals.length)} deals won</div></div>
+          <div class="stat-card"><div class="label">Team Target</div><div class="value blue">${fmt(teamQuota)}</div><div class="sub">${sorted.filter(([id]) => id !== 'unassigned').length} active AEs</div></div>
+          <div class="stat-card"><div class="label">Team % to Quota</div><div class="value ${teamPct >= 100 ? 'green' : teamPct >= 70 ? 'amber' : 'red'}">${teamPct.toFixed(0)}%</div></div>
+        </div>
+
+        <div class="card">
+          <div class="card-header"><h3>% to Quota per AE</h3></div>
+          <div class="card-body">
+            ${sorted.filter(([id]) => id !== 'unassigned').map(([id, r], i) => {
+              const pctToQuota = (r.arr / MONTHLY_QUOTA * 100);
+              const barWidth = Math.min(pctToQuota, 100).toFixed(0);
+              const barColor = pctToQuota >= 100 ? 'var(--green)' : pctToQuota >= 70 ? 'var(--amber)' : 'var(--red)';
+              return `<div style="margin-bottom:16px">
+                <div style="display:flex;justify-content:space-between;margin-bottom:4px">
+                  <span style="font-weight:700">${esc(owners[id] || 'ID: ' + id)}</span>
+                  <span style="font-weight:700;color:${barColor}">${pctToQuota.toFixed(0)}% — ${fmt(r.arr)} / ${fmt(MONTHLY_QUOTA)}</span>
+                </div>
+                <div style="background:var(--border);border-radius:6px;height:28px;overflow:hidden;position:relative">
+                  <div style="width:${barWidth}%;height:100%;background:${barColor};border-radius:6px;transition:width .3s"></div>
+                  ${pctToQuota > 100 ? `<div style="position:absolute;right:8px;top:50%;transform:translateY(-50%);font-size:11px;font-weight:700;color:#fff">OVER TARGET +${fmt(r.arr - MONTHLY_QUOTA)}</div>` : ''}
+                </div>
+                <div style="font-size:12px;color:var(--muted);margin-top:4px">${r.deals} deal${r.deals !== 1 ? 's' : ''} closed</div>
+              </div>`;
+            }).join('')}
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-header"><h3>Won Deals Detail</h3></div>
+          <div class="card-body" style="padding:0;overflow-x:auto">
+            <table>
+              <thead><tr><th>Deal</th><th>Rep</th><th>Amount</th><th>Close Date</th><th>Type</th></tr></thead>
+              <tbody>
+                ${wonDeals.sort((a, b) => (b.properties.amount || 0) - (a.properties.amount || 0)).slice(0, 50).map(d => `<tr>
+                  <td style="font-weight:600">${esc(d.properties.dealname || '—')}</td>
+                  <td>${esc(owners[d.properties.hubspot_owner_id] || '—')}</td>
+                  <td style="font-weight:700;color:var(--green)">${fmt(d.properties.amount)}</td>
+                  <td>${d.properties.closedate ? new Date(d.properties.closedate).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '—'}</td>
+                  <td>${esc(d.properties.dealtype || '—')}</td>
+                </tr>`).join('')}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      `;
+    } catch (e) {
+      $('content').innerHTML = `<div class="loading-state" style="color:var(--red)">Error: ${esc(e.message)}</div>`;
+    }
+  }
+
+  // ── Commission Report ─────────────────────────────────────────
+  const COMMISSION_RATE = 0.10; // 10% of ARR at quota
+
+  async function renderCommission() {
+    try {
+      const deals = await getCachedSearch('deals_all', 'deals',
+        ['dealstage','amount','hubspot_owner_id','dealname','closedate','hs_is_closed_won','hs_is_closed_lost','dealtype','hs_arr']);
+
+      const wonDeals = deals.results.filter(d => d.properties.hs_is_closed_won === 'true' || d.properties.dealstage === 'closedwon');
+
+      // Group by rep
+      const repComm = {};
+      wonDeals.forEach(d => {
+        const oid = d.properties.hubspot_owner_id || 'unassigned';
+        if (!repComm[oid]) repComm[oid] = { arr: 0, deals: 0, dealList: [] };
+        const amount = parseFloat(d.properties.amount) || 0;
+        const arr = parseFloat(d.properties.hs_arr) || amount;
+        repComm[oid].arr += arr;
+        repComm[oid].deals++;
+        repComm[oid].dealList.push(d);
+      });
+
+      const sorted = Object.entries(repComm).sort((a, b) => b[1].arr - a[1].arr);
+      const totalARR = sorted.reduce((s, [, r]) => s + r.arr, 0);
+      const totalCommission = totalARR * COMMISSION_RATE;
+
+      $('content').innerHTML = `
+        <div class="stats-row">
+          <div class="stat-card"><div class="label">Commission Rate</div><div class="value">10%</div><div class="sub">Of ARR at quota</div></div>
+          <div class="stat-card"><div class="label">Total ARR Closed</div><div class="value green">${fmt(totalARR)}</div></div>
+          <div class="stat-card"><div class="label">Total Commission</div><div class="value purple">${fmt(totalCommission)}</div></div>
+          <div class="stat-card"><div class="label">Quota Target</div><div class="value blue">${fmt(MONTHLY_QUOTA)}/mo</div></div>
+        </div>
+
+        <div class="card">
+          <div class="card-header"><h3>Commission by AE</h3></div>
+          <div class="card-body" style="padding:0;overflow-x:auto">
+            <table>
+              <thead><tr><th>Rep</th><th>ARR Closed</th><th>% to Quota</th><th>Commission (10%)</th><th>Deals</th><th>Avg Deal</th></tr></thead>
+              <tbody>
+                ${sorted.filter(([id]) => id !== 'unassigned').map(([id, r]) => {
+                  const commission = r.arr * COMMISSION_RATE;
+                  const pctQuota = (r.arr / MONTHLY_QUOTA * 100);
+                  const pctClass = pctQuota >= 100 ? 'badge-green' : pctQuota >= 70 ? 'badge-amber' : 'badge-red';
+                  const avgDeal = r.deals > 0 ? r.arr / r.deals : 0;
+                  return `<tr>
+                    <td style="font-weight:700">${esc(owners[id] || 'ID: ' + id)}</td>
+                    <td style="font-weight:700;color:var(--green)">${fmt(r.arr)}</td>
+                    <td><span class="badge ${pctClass}">${pctQuota.toFixed(0)}%</span></td>
+                    <td style="font-weight:700;color:var(--purple)">${fmt(commission)}</td>
+                    <td>${r.deals}</td>
+                    <td>${fmt(avgDeal)}</td>
+                  </tr>`;
+                }).join('')}
+              </tbody>
+              <tfoot>
+                <tr style="background:var(--bg);font-weight:800">
+                  <td>TOTAL</td>
+                  <td style="color:var(--green)">${fmt(totalARR)}</td>
+                  <td></td>
+                  <td style="color:var(--purple)">${fmt(totalCommission)}</td>
+                  <td>${wonDeals.length}</td>
+                  <td>${fmt(wonDeals.length > 0 ? totalARR / wonDeals.length : 0)}</td>
+                </tr>
+              </tfoot>
+            </table>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-header"><h3>Commission Breakdown</h3></div>
+          <div class="card-body">
+            ${sorted.filter(([id]) => id !== 'unassigned').map(([id, r], i) => {
+              const commission = r.arr * COMMISSION_RATE;
+              const maxComm = sorted[0]?.[1].arr * COMMISSION_RATE || 1;
+              const pct = (commission / maxComm * 100).toFixed(0);
+              return `<div class="bar-row">
+                <div class="bar-label">${esc(owners[id] || 'ID: ' + id)}</div>
+                <div class="bar-track"><div class="bar-fill" style="width:${pct}%;background:${COLORS[i % COLORS.length]}"><span>${fmt(commission)}</span></div></div>
+              </div>`;
+            }).join('')}
+          </div>
+        </div>
+      `;
+    } catch (e) {
+      $('content').innerHTML = `<div class="loading-state" style="color:var(--red)">Error: ${esc(e.message)}</div>`;
+    }
+  }
+
+  // ── Activity Goals ────────────────────────────────────────────
+  const ACTIVITY_GOALS = {
+    totalWeekly: 200,
+    totalDaily: 40,
+    demosScheduled: 8,
+    demosRun: 8,
+    onsiteVisits: 50,
+  };
+
+  async function renderActivityGoals() {
+    try {
+      const [meetings, calls, emails] = await Promise.all([
+        getCachedSearch('meetings_all', 'meetings',
+          ['hs_activity_type','hs_meeting_outcome','hubspot_owner_id','hs_createdate','hs_meeting_start_time'],
+          [], [{ propertyName: 'hs_createdate', direction: 'DESCENDING' }]),
+        getCachedSearch('calls_all', 'calls',
+          ['hs_activity_type','hs_call_status','hubspot_owner_id','hs_createdate','hs_timestamp'],
+          [], [{ propertyName: 'hs_createdate', direction: 'DESCENDING' }]),
+        getCachedSearch('emails_all', 'emails',
+          ['hs_email_direction','hubspot_owner_id','hs_createdate','hs_timestamp'],
+          [], [{ propertyName: 'hs_createdate', direction: 'DESCENDING' }]),
+      ]);
+
+      // Build per-rep activity data
+      const reps = {};
+      const ensureRep = (id) => {
+        if (!reps[id]) reps[id] = { total: 0, demos: 0, demosRun: 0, siteVisits: 0, calls: 0, emails: 0 };
+      };
+
+      meetings.results.forEach(m => {
+        const oid = m.properties.hubspot_owner_id; if (!oid) return;
+        ensureRep(oid);
+        reps[oid].total++;
+        const t = m.properties.hs_activity_type || '';
+        if (t === 'Demo/Pitch') {
+          reps[oid].demos++;
+          if (m.properties.hs_meeting_outcome === 'COMPLETED') reps[oid].demosRun++;
+        }
+        if (t === 'Site Visit') reps[oid].siteVisits++;
+      });
+
+      calls.results.forEach(c => {
+        const oid = c.properties.hubspot_owner_id; if (!oid) return;
+        ensureRep(oid);
+        reps[oid].total++;
+        reps[oid].calls++;
+      });
+
+      emails.results.forEach(e => {
+        const oid = e.properties.hubspot_owner_id; if (!oid) return;
+        ensureRep(oid);
+        reps[oid].total++;
+        reps[oid].emails++;
+      });
+
+      const sorted = Object.entries(reps).filter(([id]) => owners[id]).sort((a, b) => b[1].total - a[1].total);
+
+      // Team totals
+      const teamTotal = sorted.reduce((s, [, r]) => s + r.total, 0);
+      const teamDemos = sorted.reduce((s, [, r]) => s + r.demos, 0);
+      const teamDemosRun = sorted.reduce((s, [, r]) => s + r.demosRun, 0);
+      const teamSiteVisits = sorted.reduce((s, [, r]) => s + r.siteVisits, 0);
+
+      function goalBar(label, actual, target, color) {
+        const pctVal = target > 0 ? (actual / target * 100) : 0;
+        const barW = Math.min(pctVal, 100).toFixed(0);
+        const barColor = pctVal >= 100 ? 'var(--green)' : pctVal >= 70 ? 'var(--amber)' : 'var(--red)';
+        return `<div style="margin-bottom:14px">
+          <div style="display:flex;justify-content:space-between;margin-bottom:3px">
+            <span style="font-weight:600;font-size:13px">${label}</span>
+            <span style="font-weight:700;color:${barColor};font-size:13px">${actual} / ${target} (${pctVal.toFixed(0)}%)</span>
+          </div>
+          <div style="background:var(--border);border-radius:6px;height:22px;overflow:hidden">
+            <div style="width:${barW}%;height:100%;background:${barColor};border-radius:6px;transition:width .3s"></div>
+          </div>
+        </div>`;
+      }
+
+      $('content').innerHTML = `
+        <div class="stats-row">
+          <div class="stat-card"><div class="label">Weekly Goal</div><div class="value">${fmtN(ACTIVITY_GOALS.totalWeekly)}</div><div class="sub">Activities per rep</div></div>
+          <div class="stat-card"><div class="label">Demo Goal</div><div class="value blue">8/wk</div><div class="sub">Scheduled + Run</div></div>
+          <div class="stat-card"><div class="label">Onsite Goal</div><div class="value purple">50/wk</div><div class="sub">Site visits per rep</div></div>
+          <div class="stat-card"><div class="label">Daily Goal</div><div class="value amber">40</div><div class="sub">All activities</div></div>
+        </div>
+
+        <div class="card">
+          <div class="card-header"><h3>Activity Goals by Rep</h3></div>
+          <div class="card-body" style="padding:0;overflow-x:auto">
+            <table>
+              <thead><tr>
+                <th>Rep</th>
+                <th>Total Activities</th>
+                <th>vs ${ACTIVITY_GOALS.totalWeekly}/wk</th>
+                <th>Demos Scheduled</th>
+                <th>vs 8/wk</th>
+                <th>Demos Run</th>
+                <th>vs 8/wk</th>
+                <th>Site Visits</th>
+                <th>vs 50/wk</th>
+              </tr></thead>
+              <tbody>
+                ${sorted.map(([id, r]) => {
+                  const pctTotal = r.total > 0 ? (r.total / ACTIVITY_GOALS.totalWeekly * 100).toFixed(0) : '0';
+                  const pctDemos = (r.demos / ACTIVITY_GOALS.demosScheduled * 100).toFixed(0);
+                  const pctRun = (r.demosRun / ACTIVITY_GOALS.demosRun * 100).toFixed(0);
+                  const pctSite = (r.siteVisits / ACTIVITY_GOALS.onsiteVisits * 100).toFixed(0);
+                  const cls = v => parseFloat(v) >= 100 ? 'badge-green' : parseFloat(v) >= 70 ? 'badge-amber' : 'badge-red';
+                  return `<tr>
+                    <td style="font-weight:700">${esc(owners[id] || id)}</td>
+                    <td style="font-weight:700">${fmtN(r.total)}</td>
+                    <td><span class="badge ${cls(pctTotal)}">${pctTotal}%</span></td>
+                    <td style="color:var(--blue);font-weight:600">${r.demos}</td>
+                    <td><span class="badge ${cls(pctDemos)}">${pctDemos}%</span></td>
+                    <td style="color:var(--green);font-weight:600">${r.demosRun}</td>
+                    <td><span class="badge ${cls(pctRun)}">${pctRun}%</span></td>
+                    <td style="color:var(--purple);font-weight:600">${r.siteVisits}</td>
+                    <td><span class="badge ${cls(pctSite)}">${pctSite}%</span></td>
+                  </tr>`;
+                }).join('')}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <div style="display:grid; grid-template-columns: 1fr 1fr; gap: 20px;">
+          ${sorted.slice(0, 6).map(([id, r]) => `
+            <div class="card">
+              <div class="card-header"><h3>${esc(owners[id] || id)}</h3></div>
+              <div class="card-body">
+                ${goalBar('Total Activities', r.total, ACTIVITY_GOALS.totalWeekly)}
+                ${goalBar('Demos Scheduled', r.demos, ACTIVITY_GOALS.demosScheduled)}
+                ${goalBar('Demos Run', r.demosRun, ACTIVITY_GOALS.demosRun)}
+                ${goalBar('Site Visits', r.siteVisits, ACTIVITY_GOALS.onsiteVisits)}
+                ${goalBar('Calls', r.calls, 50)}
+                ${goalBar('Emails', r.emails, 50)}
+              </div>
+            </div>
+          `).join('')}
+        </div>
+      `;
+    } catch (e) {
+      $('content').innerHTML = `<div class="loading-state" style="color:var(--red)">Error: ${esc(e.message)}</div>`;
+    }
   }
 
   // ── User Management ─────────────────────────────────────────
