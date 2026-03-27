@@ -2463,8 +2463,8 @@ const App = (() => {
     try {
       // Build date filters
       const dateFilters = [];
-      if (dateRange.from) dateFilters.push({ propertyName: 'createdate', operator: 'GTE', value: new Date(dateRange.from).getTime().toString() });
-      if (dateRange.to) dateFilters.push({ propertyName: 'createdate', operator: 'LTE', value: new Date(dateRange.to + 'T23:59:59').getTime().toString() });
+      if (dateFrom) dateFilters.push({ propertyName: 'createdate', operator: 'GTE', value: new Date(dateFrom).getTime().toString() });
+      if (dateTo) dateFilters.push({ propertyName: 'createdate', operator: 'LTE', value: new Date(dateTo + 'T23:59:59').getTime().toString() });
 
       const baseFilters = [{ propertyName: 'lifecyclestage', operator: 'EQ', value: 'lead' }, ...dateFilters];
 
