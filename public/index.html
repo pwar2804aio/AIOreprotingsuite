@@ -2316,17 +2316,17 @@ const App = (() => {
 
   async function renderActivityGoals() {
     try {
-      const [meetings, calls, emails] = await Promise.all([
+      const [meetings, calls] = await Promise.all([
         getCachedSearch('meetings_all', 'meetings',
           ['hs_activity_type','hs_meeting_outcome','hubspot_owner_id','hs_createdate','hs_meeting_start_time'],
           [], [{ propertyName: 'hs_createdate', direction: 'DESCENDING' }]),
         getCachedSearch('calls_all', 'calls',
           ['hs_activity_type','hs_call_status','hubspot_owner_id','hs_createdate','hs_timestamp'],
           [], [{ propertyName: 'hs_createdate', direction: 'DESCENDING' }]),
-        getCachedSearch('emails_all', 'emails',
-          ['hs_email_direction','hubspot_owner_id','hs_createdate','hs_timestamp'],
-          [], [{ propertyName: 'hs_createdate', direction: 'DESCENDING' }]),
       ]);
+      // Emails scope may not be available — load optionally
+      let emails = { results: [] };
+      try { emails = await getCachedSearch('emails_all', 'emails', ['hs_email_direction','hubspot_owner_id','hs_createdate','hs_timestamp'], [], [{ propertyName: 'hs_createdate', direction: 'DESCENDING' }]); } catch (e) { /* scope not available */ }
 
       // Build per-rep activity data
       const reps = {};
