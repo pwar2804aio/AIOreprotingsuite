@@ -244,6 +244,7 @@
       <a href="#" data-view="dashboard" class="active"><i class="icon">&#x1f4ca;</i><span>Dashboard</span></a>
       <a href="#" data-view="revenue"><i class="icon">&#x1f4b0;</i><span>Revenue</span></a>
       <div class="nav-label">Sales</div>
+      <a href="#" data-view="newleads"><i class="icon">&#x1f4e5;</i><span>New Leads</span></a>
       <a href="#" data-view="pipeline"><i class="icon">&#x1f3af;</i><span>Pipeline</span></a>
       <a href="#" data-view="velocity"><i class="icon">&#x26a1;</i><span>Sales Velocity</span></a>
       <a href="#" data-view="reps"><i class="icon">&#x1f465;</i><span>Deals by Rep</span></a>
@@ -474,7 +475,7 @@ const App = (() => {
     health: 'Customer Health & Churn', geo: 'Geographic Performance',
     leadsource: 'Lead Source Analysis', tickets: 'Ticket Analytics',
     contacts: 'Contacts Overview', companies: 'Companies Overview',
-    quota: 'Quota Tracker', commission: 'Sales Commission', activitygoals: 'Activity Goals', subscriptions: 'Subscriptions',
+    newleads: 'New Leads', quota: 'Quota Tracker', commission: 'Sales Commission', activitygoals: 'Activity Goals', subscriptions: 'Subscriptions',
     users: 'Manage Users',
   };
 
@@ -490,7 +491,7 @@ const App = (() => {
   function render() {
     const c = $('content');
     c.innerHTML = '<div class="loading-state"><div class="spinner"></div> Loading data...</div>';
-    const renderers = { dashboard: renderDashboard, revenue: renderRevenue, pipeline: renderPipeline, velocity: renderVelocity, reps: renderReps, scorecard: renderScorecard, repactivity: renderRepActivity, leaderboard: renderLeaderboard, cleanroom: renderCleanRoom, health: renderHealth, geo: renderGeo, leadsource: renderLeadSource, tickets: renderTickets, contacts: renderContacts, companies: renderCompanies, quota: renderQuota, commission: renderCommission, activitygoals: renderActivityGoals, subscriptions: renderSubscriptions, users: renderUsers };
+    const renderers = { dashboard: renderDashboard, revenue: renderRevenue, pipeline: renderPipeline, velocity: renderVelocity, reps: renderReps, scorecard: renderScorecard, repactivity: renderRepActivity, leaderboard: renderLeaderboard, cleanroom: renderCleanRoom, health: renderHealth, geo: renderGeo, leadsource: renderLeadSource, tickets: renderTickets, contacts: renderContacts, companies: renderCompanies, newleads: renderNewLeads, quota: renderQuota, commission: renderCommission, activitygoals: renderActivityGoals, subscriptions: renderSubscriptions, users: renderUsers };
     (renderers[currentView] || renderDashboard)();
   }
 
@@ -2452,6 +2453,284 @@ const App = (() => {
           `).join('')}
         </div>
       `;
+    } catch (e) {
+      $('content').innerHTML = `<div class="loading-state" style="color:var(--red)">Error: ${esc(e.message)}</div>`;
+    }
+  }
+
+  // ── New Leads ───────────────────────────────────────────────
+  async function renderNewLeads() {
+    try {
+      // Build date filters
+      const dateFilters = [];
+      if (dateRange.from) dateFilters.push({ propertyName: 'createdate', operator: 'GTE', value: new Date(dateRange.from).getTime().toString() });
+      if (dateRange.to) dateFilters.push({ propertyName: 'createdate', operator: 'LTE', value: new Date(dateRange.to + 'T23:59:59').getTime().toString() });
+
+      const baseFilters = [{ propertyName: 'lifecyclestage', operator: 'EQ', value: 'lead' }, ...dateFilters];
+
+      const leads = await getCachedSearch('newleads_all', 'companies',
+        ['name','lifecyclestage','hubspot_owner_id','createdate','notes_last_contacted','notes_last_updated',
+         'hs_last_sales_activity_timestamp','num_contacted_notes','industrytype','cuisine_type','ownership_type',
+         'city','state','hs_lead_status','num_associated_contacts','num_associated_deals','hs_object_source_label',
+         'company_source','hs_analytics_source'],
+        baseFilters,
+        [{ propertyName: 'createdate', direction: 'DESCENDING' }]
+      );
+
+      const all = leads.results;
+      const total = leads.total || all.length;
+      const now = Date.now();
+
+      // Assigned vs unassigned
+      const assigned = all.filter(c => c.properties.hubspot_owner_id);
+      const unassigned = all.filter(c => !c.properties.hubspot_owner_id);
+
+      // Action taken analysis
+      const contacted = all.filter(c => parseInt(c.properties.num_contacted_notes) > 0);
+      const notContacted = all.filter(c => !(parseInt(c.properties.num_contacted_notes) > 0));
+      const hasDeals = all.filter(c => parseInt(c.properties.num_associated_deals) > 0);
+
+      // Days since creation (lead age)
+      function daysSince(d) { return d ? Math.floor((now - new Date(d).getTime()) / 86400000) : 999; }
+      function ageBadge(days) {
+        if (days <= 1) return '<span class="badge badge-green">Today</span>';
+        if (days <= 3) return '<span class="badge badge-green">Fresh</span>';
+        if (days <= 7) return '<span class="badge badge-amber">This Week</span>';
+        if (days <= 30) return '<span class="badge" style="background:#7c5cfc22;color:var(--purple)">This Month</span>';
+        return '<span class="badge badge-red">Stale (' + days + 'd)</span>';
+      }
+      function actionBadge(c) {
+        const contacts = parseInt(c.properties.num_contacted_notes) || 0;
+        const deals = parseInt(c.properties.num_associated_deals) || 0;
+        if (deals > 0) return '<span class="badge badge-green">Deal Created</span>';
+        if (contacts >= 3) return '<span class="badge badge-green">Engaged</span>';
+        if (contacts > 0) return '<span class="badge badge-amber">Contacted</span>';
+        return '<span class="badge badge-red">No Action</span>';
+      }
+
+      // Leads by rep
+      const repCounts = {};
+      assigned.forEach(c => {
+        const oid = c.properties.hubspot_owner_id;
+        if (!repCounts[oid]) repCounts[oid] = { total: 0, contacted: 0, noAction: 0, withDeals: 0 };
+        repCounts[oid].total++;
+        if (parseInt(c.properties.num_contacted_notes) > 0) repCounts[oid].contacted++;
+        else repCounts[oid].noAction++;
+        if (parseInt(c.properties.num_associated_deals) > 0) repCounts[oid].withDeals++;
+      });
+      const repSorted = Object.entries(repCounts).sort((a, b) => b[1].total - a[1].total);
+      const maxRepLeads = repSorted[0]?.[1].total || 1;
+
+      // Lead source breakdown
+      const sourceCounts = {};
+      all.forEach(c => {
+        const src = c.properties.hs_analytics_source || c.properties.hs_object_source_label || c.properties.company_source || 'Unknown';
+        sourceCounts[src] = (sourceCounts[src] || 0) + 1;
+      });
+      const sourceSorted = Object.entries(sourceCounts).sort((a, b) => b[1] - a[1]).slice(0, 8);
+      const maxSource = sourceSorted[0]?.[1] || 1;
+
+      // Restaurant type breakdown
+      const typeCounts = {};
+      all.forEach(c => {
+        const t = c.properties.industrytype || 'Unknown';
+        typeCounts[t] = (typeCounts[t] || 0) + 1;
+      });
+      const typeSorted = Object.entries(typeCounts).sort((a, b) => b[1] - a[1]);
+
+      // Lead age distribution
+      const ageBuckets = { 'Today': 0, '2-3 Days': 0, '4-7 Days': 0, '8-14 Days': 0, '15-30 Days': 0, '30+ Days': 0 };
+      all.forEach(c => {
+        const d = daysSince(c.properties.createdate);
+        if (d <= 1) ageBuckets['Today']++;
+        else if (d <= 3) ageBuckets['2-3 Days']++;
+        else if (d <= 7) ageBuckets['4-7 Days']++;
+        else if (d <= 14) ageBuckets['8-14 Days']++;
+        else if (d <= 30) ageBuckets['15-30 Days']++;
+        else ageBuckets['30+ Days']++;
+      });
+
+      // Created this week / this month
+      const weekAgo = now - 7 * 86400000;
+      const monthAgo = now - 30 * 86400000;
+      const thisWeek = all.filter(c => new Date(c.properties.createdate).getTime() > weekAgo).length;
+      const thisMonth = all.filter(c => new Date(c.properties.createdate).getTime() > monthAgo).length;
+
+      // Conversion rate (leads with deals)
+      const convRate = all.length > 0 ? (hasDeals.length / all.length * 100).toFixed(1) : '0.0';
+
+      // Action donut
+      const actionDonut = [
+        { label: 'Deal Created', value: hasDeals.length, color: '#00c48c' },
+        { label: 'Contacted', value: contacted.length - hasDeals.length, color: '#4c6ef5' },
+        { label: 'No Action', value: notContacted.length, color: '#e8481e' },
+      ].filter(d => d.value > 0);
+
+      $('content').innerHTML = `
+        <div class="stats-row">
+          <div class="stat-card"><div class="label">Total New Leads</div><div class="value">${fmtN(total)}</div><div class="sub">Showing ${fmtN(all.length)} of ${fmtN(total)}</div></div>
+          <div class="stat-card"><div class="label">Assigned</div><div class="value green">${fmtN(assigned.length)}</div><div class="sub">${all.length > 0 ? (assigned.length / all.length * 100).toFixed(0) : 0}% of leads</div></div>
+          <div class="stat-card"><div class="label">Unassigned</div><div class="value ${unassigned.length > 0 ? 'red' : 'green'}">${fmtN(unassigned.length)}</div><div class="sub">Need rep assignment</div></div>
+          <div class="stat-card"><div class="label">No Action Taken</div><div class="value ${notContacted.length > 0 ? 'amber' : 'green'}">${fmtN(notContacted.length)}</div><div class="sub">${all.length > 0 ? (notContacted.length / all.length * 100).toFixed(0) : 0}% untouched</div></div>
+          <div class="stat-card"><div class="label">This Week</div><div class="value blue">${fmtN(thisWeek)}</div><div class="sub">${fmtN(thisMonth)} this month</div></div>
+          <div class="stat-card"><div class="label">Conversion</div><div class="value purple">${convRate}%</div><div class="sub">${fmtN(hasDeals.length)} leads with deals</div></div>
+        </div>
+
+        <div style="display:grid; grid-template-columns: 1fr 1fr; gap: 20px;">
+          <div class="card">
+            <div class="card-header"><h3>Leads by Rep</h3></div>
+            <div class="card-body">
+              ${unassigned.length > 0 ? `<div class="bar-row">
+                <div class="bar-label" style="color:var(--red);font-weight:700">Unassigned</div>
+                <div class="bar-track"><div class="bar-fill" style="width:${(unassigned.length / maxRepLeads * 100).toFixed(0)}%;background:var(--red)"><span>${unassigned.length}</span></div></div>
+              </div>` : ''}
+              ${repSorted.map(([id, r], i) => {
+                const pct = (r.total / maxRepLeads * 100).toFixed(0);
+                const actionPct = r.total > 0 ? (r.contacted / r.total * 100).toFixed(0) : 0;
+                return `<div class="bar-row">
+                  <div class="bar-label">${esc(owners[id] || 'ID: ' + id)} <span style="color:var(--muted);font-size:11px">${actionPct}% acted on</span></div>
+                  <div class="bar-track"><div class="bar-fill" style="width:${pct}%;background:${COLORS[i % COLORS.length]}"><span>${r.total}</span></div></div>
+                </div>`;
+              }).join('')}
+            </div>
+          </div>
+          <div class="card">
+            <div class="card-header"><h3>Action Taken</h3></div>
+            <div class="card-body" id="leads-action-donut"></div>
+          </div>
+        </div>
+
+        <div style="display:grid; grid-template-columns: 1fr 1fr; gap: 20px;">
+          <div class="card">
+            <div class="card-header"><h3>Lead Age Distribution</h3></div>
+            <div class="card-body">
+              ${Object.entries(ageBuckets).map(([label, count], i) => {
+                const pct = all.length > 0 ? (count / all.length * 100).toFixed(0) : 0;
+                const colors = ['#00c48c','#00c48c','#4c6ef5','#7c5cfc','#f5a623','#e8481e'];
+                return `<div class="bar-row">
+                  <div class="bar-label">${label}</div>
+                  <div class="bar-track"><div class="bar-fill" style="width:${pct}%;background:${colors[i]}"><span>${count}</span></div></div>
+                </div>`;
+              }).join('')}
+            </div>
+          </div>
+          <div class="card">
+            <div class="card-header"><h3>Lead Source</h3></div>
+            <div class="card-body">
+              ${sourceSorted.map(([src, count], i) => {
+                const pct = (count / maxSource * 100).toFixed(0);
+                return `<div class="bar-row">
+                  <div class="bar-label">${esc(src)}</div>
+                  <div class="bar-track"><div class="bar-fill" style="width:${pct}%;background:${COLORS[i % COLORS.length]}"><span>${count}</span></div></div>
+                </div>`;
+              }).join('')}
+            </div>
+          </div>
+        </div>
+
+        <div style="display:grid; grid-template-columns: 1fr 1fr; gap: 20px;">
+          <div class="card">
+            <div class="card-header"><h3>Restaurant Type</h3></div>
+            <div class="card-body">
+              ${typeSorted.map(([type, count], i) => {
+                const pct = all.length > 0 ? (count / all.length * 100).toFixed(0) : 0;
+                return `<div class="bar-row">
+                  <div class="bar-label">${esc(REST_TYPE_LABELS[type] || type)}</div>
+                  <div class="bar-track"><div class="bar-fill" style="width:${pct}%;background:${COLORS[i % COLORS.length]}"><span>${count}</span></div></div>
+                </div>`;
+              }).join('')}
+            </div>
+          </div>
+          <div class="card">
+            <div class="card-header"><h3>Rep Action Rate</h3></div>
+            <div class="card-body">
+              ${repSorted.map(([id, r], i) => {
+                const actionPct = r.total > 0 ? (r.contacted / r.total * 100).toFixed(0) : 0;
+                const dealPct = r.total > 0 ? (r.withDeals / r.total * 100).toFixed(0) : 0;
+                return `<div style="display:flex;align-items:center;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--border)">
+                  <span style="font-weight:600;min-width:120px">${esc(owners[id] || 'ID: ' + id)}</span>
+                  <span style="font-size:12px;color:var(--muted)">${r.total} leads</span>
+                  <span style="font-size:12px;font-weight:700;color:${parseInt(actionPct) >= 70 ? 'var(--green)' : parseInt(actionPct) >= 40 ? 'var(--amber)' : 'var(--red)'}">${actionPct}% contacted</span>
+                  <span style="font-size:12px;font-weight:700;color:var(--purple)">${dealPct}% → deal</span>
+                </div>`;
+              }).join('')}
+            </div>
+          </div>
+        </div>
+
+        ${unassigned.length > 0 ? `<div class="card" style="border-left:4px solid var(--red)">
+          <div class="card-header"><h3 style="color:var(--red)">Unassigned Leads (${unassigned.length})</h3></div>
+          <div class="card-body" style="padding:0;overflow-x:auto;max-height:400px;overflow-y:auto">
+            <table>
+              <thead><tr><th>Company</th><th>Created</th><th>Age</th><th>Source</th><th>Type</th><th>City</th></tr></thead>
+              <tbody>
+                ${unassigned.map(c => {
+                  const days = daysSince(c.properties.createdate);
+                  const src = c.properties.hs_analytics_source || c.properties.hs_object_source_label || '—';
+                  return `<tr>
+                    <td style="font-weight:700">${esc(c.properties.name || '—')}</td>
+                    <td>${new Date(c.properties.createdate).toLocaleDateString('en-US',{month:'short',day:'numeric'})}</td>
+                    <td>${ageBadge(days)}</td>
+                    <td>${esc(src)}</td>
+                    <td>${esc(REST_TYPE_LABELS[c.properties.industrytype] || c.properties.industrytype || '—')}</td>
+                    <td>${esc([c.properties.city, c.properties.state].filter(Boolean).join(', ') || '—')}</td>
+                  </tr>`;
+                }).join('')}
+              </tbody>
+            </table>
+          </div>
+        </div>` : ''}
+
+        ${notContacted.length > 0 ? `<div class="card" style="border-left:4px solid var(--amber)">
+          <div class="card-header"><h3 style="color:var(--amber)">No Action Taken (${notContacted.length})</h3></div>
+          <div class="card-body" style="padding:0;overflow-x:auto;max-height:400px;overflow-y:auto">
+            <table>
+              <thead><tr><th>Company</th><th>Created</th><th>Age</th><th>Assigned To</th><th>Source</th><th>Type</th></tr></thead>
+              <tbody>
+                ${notContacted.sort((a,b) => new Date(a.properties.createdate) - new Date(b.properties.createdate)).map(c => {
+                  const days = daysSince(c.properties.createdate);
+                  const src = c.properties.hs_analytics_source || c.properties.hs_object_source_label || '—';
+                  return `<tr>
+                    <td style="font-weight:700">${esc(c.properties.name || '—')}</td>
+                    <td>${new Date(c.properties.createdate).toLocaleDateString('en-US',{month:'short',day:'numeric'})}</td>
+                    <td>${ageBadge(days)}</td>
+                    <td>${esc(owners[c.properties.hubspot_owner_id] || '<span style="color:var(--red)">Unassigned</span>')}</td>
+                    <td>${esc(src)}</td>
+                    <td>${esc(REST_TYPE_LABELS[c.properties.industrytype] || c.properties.industrytype || '—')}</td>
+                  </tr>`;
+                }).join('')}
+              </tbody>
+            </table>
+          </div>
+        </div>` : ''}
+
+        <div class="card">
+          <div class="card-header"><h3>All New Leads (${fmtN(all.length)})</h3></div>
+          <div class="card-body" style="padding:0;overflow-x:auto;max-height:600px;overflow-y:auto">
+            <table>
+              <thead><tr><th>Company</th><th>Created</th><th>Age</th><th>Action</th><th>Contacts</th><th>Owner</th><th>Source</th><th>Type</th><th>City</th></tr></thead>
+              <tbody>
+                ${all.map(c => {
+                  const days = daysSince(c.properties.createdate);
+                  const src = c.properties.hs_analytics_source || c.properties.hs_object_source_label || '—';
+                  return `<tr>
+                    <td style="font-weight:700">${esc(c.properties.name || '—')}</td>
+                    <td style="white-space:nowrap">${new Date(c.properties.createdate).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'})}</td>
+                    <td>${ageBadge(days)}</td>
+                    <td>${actionBadge(c)}</td>
+                    <td style="text-align:center">${c.properties.num_contacted_notes || '0'}</td>
+                    <td>${esc(owners[c.properties.hubspot_owner_id] || '—')}</td>
+                    <td>${esc(src)}</td>
+                    <td>${esc(REST_TYPE_LABELS[c.properties.industrytype] || c.properties.industrytype || '—')}</td>
+                    <td>${esc([c.properties.city, c.properties.state].filter(Boolean).join(', ') || '—')}</td>
+                  </tr>`;
+                }).join('')}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      `;
+      $('leads-action-donut').innerHTML = buildDonut(actionDonut);
     } catch (e) {
       $('content').innerHTML = `<div class="loading-state" style="color:var(--red)">Error: ${esc(e.message)}</div>`;
     }
