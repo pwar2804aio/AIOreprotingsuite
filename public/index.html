@@ -255,6 +255,7 @@
       <a href="#" data-view="quota"><i class="icon">&#x1f4c8;</i><span>Quota Tracker</span></a>
       <a href="#" data-view="commission"><i class="icon">&#x1f4b5;</i><span>Commission</span></a>
       <a href="#" data-view="activitygoals"><i class="icon">&#x1f3af;</i><span>Activity Goals</span></a>
+      <a href="#" data-view="subscriptions"><i class="icon">&#x1f4cb;</i><span>Subscriptions</span></a>
       <div class="nav-label">Analytics</div>
       <a href="#" data-view="health"><i class="icon">&#x1f49a;</i><span>Customer Health</span></a>
       <a href="#" data-view="geo"><i class="icon">&#x1f4cd;</i><span>Geographic</span></a>
@@ -473,7 +474,7 @@ const App = (() => {
     health: 'Customer Health & Churn', geo: 'Geographic Performance',
     leadsource: 'Lead Source Analysis', tickets: 'Ticket Analytics',
     contacts: 'Contacts Overview', companies: 'Companies Overview',
-    quota: 'Quota Tracker', commission: 'Sales Commission', activitygoals: 'Activity Goals',
+    quota: 'Quota Tracker', commission: 'Sales Commission', activitygoals: 'Activity Goals', subscriptions: 'Subscriptions',
     users: 'Manage Users',
   };
 
@@ -489,7 +490,7 @@ const App = (() => {
   function render() {
     const c = $('content');
     c.innerHTML = '<div class="loading-state"><div class="spinner"></div> Loading data...</div>';
-    const renderers = { dashboard: renderDashboard, revenue: renderRevenue, pipeline: renderPipeline, velocity: renderVelocity, reps: renderReps, scorecard: renderScorecard, repactivity: renderRepActivity, leaderboard: renderLeaderboard, cleanroom: renderCleanRoom, health: renderHealth, geo: renderGeo, leadsource: renderLeadSource, tickets: renderTickets, contacts: renderContacts, companies: renderCompanies, quota: renderQuota, commission: renderCommission, activitygoals: renderActivityGoals, users: renderUsers };
+    const renderers = { dashboard: renderDashboard, revenue: renderRevenue, pipeline: renderPipeline, velocity: renderVelocity, reps: renderReps, scorecard: renderScorecard, repactivity: renderRepActivity, leaderboard: renderLeaderboard, cleanroom: renderCleanRoom, health: renderHealth, geo: renderGeo, leadsource: renderLeadSource, tickets: renderTickets, contacts: renderContacts, companies: renderCompanies, quota: renderQuota, commission: renderCommission, activitygoals: renderActivityGoals, subscriptions: renderSubscriptions, users: renderUsers };
     (renderers[currentView] || renderDashboard)();
   }
 
@@ -2451,6 +2452,133 @@ const App = (() => {
           `).join('')}
         </div>
       `;
+    } catch (e) {
+      $('content').innerHTML = `<div class="loading-state" style="color:var(--red)">Error: ${esc(e.message)}</div>`;
+    }
+  }
+
+  // ── Subscriptions ──────────────────────────────────────────
+  const SUB_STATUS_CONFIG = {
+    active: { label: 'Active', color: '#00c48c' },
+    past_due: { label: 'Past Due', color: '#e8481e' },
+    unpaid: { label: 'Unpaid', color: '#f5a623' },
+    canceled: { label: 'Canceled', color: '#607d8b' },
+    expired: { label: 'Expired', color: '#999' },
+    scheduled: { label: 'Scheduled', color: '#4c6ef5' },
+    paused: { label: 'Paused', color: '#7c5cfc' },
+  };
+
+  async function renderSubscriptions() {
+    try {
+      const companies = await getCachedSearch('subs_companies', 'companies',
+        ['name','subscription_status','arr','mrr','monthly_recurring_revenue_mrr','adyen_processing_arr','hubspot_owner_id'],
+        [{ propertyName: 'subscription_status', operator: 'HAS_PROPERTY' }],
+        [{ propertyName: 'name', direction: 'ASCENDING' }]
+      );
+
+      const all = companies.results;
+
+      // Status counts
+      const statusCounts = {};
+      all.forEach(c => {
+        const s = c.properties.subscription_status || 'unknown';
+        statusCounts[s] = (statusCounts[s] || 0) + 1;
+      });
+
+      const active = all.filter(c => c.properties.subscription_status === 'active');
+      const atRisk = all.filter(c => ['past_due','unpaid','paused'].includes(c.properties.subscription_status));
+      const churned = all.filter(c => ['canceled','expired'].includes(c.properties.subscription_status));
+
+      const totalARR = active.reduce((s, c) => s + (parseFloat(c.properties.arr) || 0), 0);
+      const totalMRR = active.reduce((s, c) => s + (parseFloat(c.properties.mrr) || parseFloat(c.properties.monthly_recurring_revenue_mrr) || 0), 0);
+      const atRiskARR = atRisk.reduce((s, c) => s + (parseFloat(c.properties.arr) || 0), 0);
+
+      // Donut data
+      const donutData = Object.entries(statusCounts).map(([status, count]) => ({
+        label: SUB_STATUS_CONFIG[status]?.label || status,
+        value: count,
+        color: SUB_STATUS_CONFIG[status]?.color || '#999',
+      }));
+
+      $('content').innerHTML = `
+        <div class="stats-row">
+          <div class="stat-card"><div class="label">Total Subscriptions</div><div class="value">${fmtN(all.length)}</div></div>
+          <div class="stat-card"><div class="label">Active</div><div class="value green">${fmtN(active.length)}</div></div>
+          <div class="stat-card"><div class="label">At Risk</div><div class="value ${atRisk.length > 0 ? 'red' : 'green'}">${fmtN(atRisk.length)}</div><div class="sub">Past due / Unpaid / Paused</div></div>
+          <div class="stat-card"><div class="label">Active ARR</div><div class="value blue">${fmt(totalARR)}</div></div>
+          <div class="stat-card"><div class="label">Active MRR</div><div class="value purple">${fmt(totalMRR)}</div></div>
+          <div class="stat-card"><div class="label">At-Risk ARR</div><div class="value ${atRiskARR > 0 ? 'amber' : 'green'}">${fmt(atRiskARR)}</div></div>
+        </div>
+
+        <div style="display:grid; grid-template-columns: 1fr 1fr; gap: 20px;">
+          <div class="card">
+            <div class="card-header"><h3>Status Breakdown</h3></div>
+            <div class="card-body">
+              ${Object.entries(statusCounts).sort((a, b) => b[1] - a[1]).map(([status, count], i) => {
+                const cfg = SUB_STATUS_CONFIG[status] || { label: status, color: '#999' };
+                const pct = (count / all.length * 100).toFixed(0);
+                return `<div class="bar-row">
+                  <div class="bar-label">${cfg.label}</div>
+                  <div class="bar-track"><div class="bar-fill" style="width:${pct}%;background:${cfg.color}"><span>${count}</span></div></div>
+                </div>`;
+              }).join('')}
+            </div>
+          </div>
+          <div class="card">
+            <div class="card-header"><h3>Status Distribution</h3></div>
+            <div class="card-body" id="sub-donut"></div>
+          </div>
+        </div>
+
+        ${atRisk.length > 0 ? `<div class="card" style="border-left:4px solid var(--red)">
+          <div class="card-header"><h3 style="color:var(--red)">At-Risk Subscriptions</h3></div>
+          <div class="card-body" style="padding:0;overflow-x:auto">
+            <table>
+              <thead><tr><th>Company</th><th>Status</th><th>ARR</th><th>MRR</th><th>Owner</th></tr></thead>
+              <tbody>
+                ${atRisk.map(c => {
+                  const s = c.properties.subscription_status;
+                  const cfg = SUB_STATUS_CONFIG[s] || { label: s, color: '#999' };
+                  return `<tr>
+                    <td style="font-weight:700">${esc(c.properties.name || '—')}</td>
+                    <td><span class="badge" style="background:${cfg.color}22;color:${cfg.color}">${cfg.label}</span></td>
+                    <td style="font-weight:600">${fmt(c.properties.arr)}</td>
+                    <td>${fmt(c.properties.mrr || c.properties.monthly_recurring_revenue_mrr)}</td>
+                    <td>${esc(owners[c.properties.hubspot_owner_id] || '—')}</td>
+                  </tr>`;
+                }).join('')}
+              </tbody>
+            </table>
+          </div>
+        </div>` : ''}
+
+        <div class="card">
+          <div class="card-header"><h3>All Subscriptions</h3></div>
+          <div class="card-body" style="padding:0;overflow-x:auto;max-height:600px;overflow-y:auto">
+            <table>
+              <thead><tr><th>Company</th><th>Status</th><th>ARR</th><th>MRR</th><th>Adyen ARR</th><th>Owner</th></tr></thead>
+              <tbody>
+                ${all.sort((a, b) => {
+                  const order = ['active','scheduled','past_due','unpaid','paused','canceled','expired'];
+                  return order.indexOf(a.properties.subscription_status) - order.indexOf(b.properties.subscription_status);
+                }).map(c => {
+                  const s = c.properties.subscription_status;
+                  const cfg = SUB_STATUS_CONFIG[s] || { label: s, color: '#999' };
+                  return `<tr>
+                    <td style="font-weight:700">${esc(c.properties.name || '—')}</td>
+                    <td><span class="badge" style="background:${cfg.color}22;color:${cfg.color}">${cfg.label}</span></td>
+                    <td style="font-weight:600">${fmt(c.properties.arr)}</td>
+                    <td>${fmt(c.properties.mrr || c.properties.monthly_recurring_revenue_mrr)}</td>
+                    <td>${fmt(c.properties.adyen_processing_arr)}</td>
+                    <td>${esc(owners[c.properties.hubspot_owner_id] || '—')}</td>
+                  </tr>`;
+                }).join('')}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      `;
+      $('sub-donut').innerHTML = buildDonut(donutData);
     } catch (e) {
       $('content').innerHTML = `<div class="loading-state" style="color:var(--red)">Error: ${esc(e.message)}</div>`;
     }
