@@ -353,12 +353,16 @@ const App = (() => {
     $('auth-error').classList.add('hidden');
     try {
       token = t;
-      // Validate token by fetching owners
-      const res = await api('crm/v3/owners?limit=100');
+      // Validate token by fetching contacts (most common scope)
+      const res = await api('crm/v3/objects/contacts?limit=1');
       if (!res.results) throw new Error('Invalid response');
       localStorage.setItem('hs_report_token', t);
+      // Try loading owners (optional scope)
       owners = {};
-      res.results.forEach(o => { owners[o.id] = `${o.firstName || ''} ${o.lastName || ''}`.trim() || o.email || 'Unknown'; });
+      try {
+        const ownRes = await api('crm/v3/owners?limit=100');
+        if (ownRes.results) ownRes.results.forEach(o => { owners[o.id] = `${o.firstName || ''} ${o.lastName || ''}`.trim() || o.email || 'Unknown'; });
+      } catch (e) { /* owners scope not available, that's ok */ }
       boot();
     } catch (e) {
       $('auth-error').textContent = 'Connection failed: ' + e.message + '. Check your token and try again.';
