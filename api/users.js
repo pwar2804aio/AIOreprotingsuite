@@ -40,7 +40,7 @@ module.exports = async function handler(req, res) {
 
   // POST — create user
   if (req.method === 'POST') {
-    if (!kv.isConfigured()) return res.status(500).json({ error: 'User storage not configured. Missing env vars: UPSTASH_REDIS_REST_URL and UPSTASH_REDIS_REST_TOKEN', debug: { hasUrl: !!(process.env.UPSTASH_REDIS_REST_URL || process.env.KV_REST_API_URL), hasToken: !!(process.env.UPSTASH_REDIS_REST_TOKEN || process.env.KV_REST_API_TOKEN) } });
+    if (!kv.isConfigured()) return res.status(500).json({ error: 'User storage not configured. Set UPSTASH_REDIS_REST_URL and UPSTASH_REDIS_REST_TOKEN env vars.' });
     const { username, password, isAdmin: makeAdmin } = req.body || {};
     if (!username || !password) return res.status(400).json({ error: 'Username and password required' });
     if (username.length < 2) return res.status(400).json({ error: 'Username must be at least 2 characters' });
