@@ -2459,6 +2459,12 @@ const App = (() => {
   }
 
   // ── New Leads ───────────────────────────────────────────────
+  let leadsFilterSource = '';
+  let leadsFilterRep = '';
+
+  function setLeadsFilterSource(val) { leadsFilterSource = val; cache = {}; render(); }
+  function setLeadsFilterRep(val) { leadsFilterRep = val; cache = {}; render(); }
+
   async function renderNewLeads() {
     try {
       // Build date filters
@@ -2477,9 +2483,22 @@ const App = (() => {
         [{ propertyName: 'createdate', direction: 'DESCENDING' }]
       );
 
-      const all = leads.results;
-      const total = leads.total || all.length;
+      const rawAll = leads.results;
+      const total = leads.total || rawAll.length;
       const now = Date.now();
+
+      // Helper to get source for a company
+      function getSource(c) { return c.properties.hs_analytics_source || c.properties.hs_object_source_label || c.properties.company_source || 'Unknown'; }
+
+      // Collect all unique sources and reps for dropdown (before filtering)
+      const allSources = [...new Set(rawAll.map(c => getSource(c)))].sort();
+      const allRepIds = [...new Set(rawAll.filter(c => c.properties.hubspot_owner_id).map(c => c.properties.hubspot_owner_id))];
+
+      // Apply client-side filters
+      let all = rawAll;
+      if (leadsFilterSource) all = all.filter(c => getSource(c) === leadsFilterSource);
+      if (leadsFilterRep === '__unassigned__') all = all.filter(c => !c.properties.hubspot_owner_id);
+      else if (leadsFilterRep) all = all.filter(c => c.properties.hubspot_owner_id === leadsFilterRep);
 
       // Assigned vs unassigned
       const assigned = all.filter(c => c.properties.hubspot_owner_id);
@@ -2524,11 +2543,16 @@ const App = (() => {
       // Lead source breakdown
       const sourceCounts = {};
       all.forEach(c => {
-        const src = c.properties.hs_analytics_source || c.properties.hs_object_source_label || c.properties.company_source || 'Unknown';
+        const src = getSource(c);
         sourceCounts[src] = (sourceCounts[src] || 0) + 1;
       });
-      const sourceSorted = Object.entries(sourceCounts).sort((a, b) => b[1] - a[1]).slice(0, 8);
+      const sourceSorted = Object.entries(sourceCounts).sort((a, b) => b[1] - a[1]).slice(0, 10);
       const maxSource = sourceSorted[0]?.[1] || 1;
+
+      // Source donut
+      const sourceDonut = sourceSorted.slice(0, 8).map(([src, count], i) => ({
+        label: src, value: count, color: COLORS[i % COLORS.length],
+      }));
 
       // Restaurant type breakdown
       const typeCounts = {};
@@ -2566,9 +2590,30 @@ const App = (() => {
         { label: 'No Action', value: notContacted.length, color: '#e8481e' },
       ].filter(d => d.value > 0);
 
+      // Active filter labels
+      const activeFilters = [];
+      if (leadsFilterSource) activeFilters.push('Source: ' + leadsFilterSource);
+      if (leadsFilterRep === '__unassigned__') activeFilters.push('Rep: Unassigned');
+      else if (leadsFilterRep) activeFilters.push('Rep: ' + (owners[leadsFilterRep] || leadsFilterRep));
+
       $('content').innerHTML = `
+        <div class="card" style="margin-bottom:20px;padding:16px 20px;display:flex;align-items:center;gap:16px;flex-wrap:wrap">
+          <span style="font-weight:700;font-size:13px;color:var(--muted)">Filters:</span>
+          <select id="leads-source-filter" onchange="App.setLeadsFilterSource(this.value)" style="padding:7px 12px;border-radius:8px;border:1px solid var(--border);font-size:13px;background:var(--card);min-width:180px">
+            <option value="">All Lead Sources</option>
+            ${allSources.map(s => `<option value="${esc(s)}" ${leadsFilterSource === s ? 'selected' : ''}>${esc(s)}</option>`).join('')}
+          </select>
+          <select id="leads-rep-filter" onchange="App.setLeadsFilterRep(this.value)" style="padding:7px 12px;border-radius:8px;border:1px solid var(--border);font-size:13px;background:var(--card);min-width:180px">
+            <option value="">All Reps</option>
+            <option value="__unassigned__" ${leadsFilterRep === '__unassigned__' ? 'selected' : ''}>Unassigned</option>
+            ${allRepIds.sort((a,b) => (owners[a]||'').localeCompare(owners[b]||'')).map(id => `<option value="${id}" ${leadsFilterRep === id ? 'selected' : ''}>${esc(owners[id] || 'ID: ' + id)}</option>`).join('')}
+          </select>
+          ${activeFilters.length > 0 ? `<button onclick="App.setLeadsFilterSource('');App.setLeadsFilterRep('')" style="padding:6px 14px;border-radius:8px;background:var(--red);color:#fff;font-size:12px;font-weight:600">Clear Filters</button>
+          <span style="font-size:12px;color:var(--muted)">${activeFilters.join(' | ')}</span>` : ''}
+        </div>
+
         <div class="stats-row">
-          <div class="stat-card"><div class="label">Total New Leads</div><div class="value">${fmtN(total)}</div><div class="sub">Showing ${fmtN(all.length)} of ${fmtN(total)}</div></div>
+          <div class="stat-card"><div class="label">Total New Leads</div><div class="value">${fmtN(total)}</div><div class="sub">Showing ${fmtN(all.length)}${all.length < rawAll.length ? ' (filtered)' : ''}</div></div>
           <div class="stat-card"><div class="label">Assigned</div><div class="value green">${fmtN(assigned.length)}</div><div class="sub">${all.length > 0 ? (assigned.length / all.length * 100).toFixed(0) : 0}% of leads</div></div>
           <div class="stat-card"><div class="label">Unassigned</div><div class="value ${unassigned.length > 0 ? 'red' : 'green'}">${fmtN(unassigned.length)}</div><div class="sub">Need rep assignment</div></div>
           <div class="stat-card"><div class="label">No Action Taken</div><div class="value ${notContacted.length > 0 ? 'amber' : 'green'}">${fmtN(notContacted.length)}</div><div class="sub">${all.length > 0 ? (notContacted.length / all.length * 100).toFixed(0) : 0}% untouched</div></div>
@@ -2582,7 +2627,7 @@ const App = (() => {
             <div class="card-body">
               ${unassigned.length > 0 ? `<div class="bar-row">
                 <div class="bar-label" style="color:var(--red);font-weight:700">Unassigned</div>
-                <div class="bar-track"><div class="bar-fill" style="width:${(unassigned.length / maxRepLeads * 100).toFixed(0)}%;background:var(--red)"><span>${unassigned.length}</span></div></div>
+                <div class="bar-track"><div class="bar-fill" style="width:${(unassigned.length / Math.max(maxRepLeads, unassigned.length) * 100).toFixed(0)}%;background:var(--red)"><span>${unassigned.length}</span></div></div>
               </div>` : ''}
               ${repSorted.map(([id, r], i) => {
                 const pct = (r.total / maxRepLeads * 100).toFixed(0);
@@ -2602,6 +2647,25 @@ const App = (() => {
 
         <div style="display:grid; grid-template-columns: 1fr 1fr; gap: 20px;">
           <div class="card">
+            <div class="card-header"><h3>Lead Source Breakdown</h3></div>
+            <div class="card-body">
+              ${sourceSorted.map(([src, count], i) => {
+                const pct = (count / maxSource * 100).toFixed(0);
+                return `<div class="bar-row">
+                  <div class="bar-label">${esc(src)} <span style="color:var(--muted);font-size:11px">${all.length > 0 ? (count/all.length*100).toFixed(0) : 0}%</span></div>
+                  <div class="bar-track"><div class="bar-fill" style="width:${pct}%;background:${COLORS[i % COLORS.length]}"><span>${count}</span></div></div>
+                </div>`;
+              }).join('')}
+            </div>
+          </div>
+          <div class="card">
+            <div class="card-header"><h3>Source Distribution</h3></div>
+            <div class="card-body" id="leads-source-donut"></div>
+          </div>
+        </div>
+
+        <div style="display:grid; grid-template-columns: 1fr 1fr; gap: 20px;">
+          <div class="card">
             <div class="card-header"><h3>Lead Age Distribution</h3></div>
             <div class="card-body">
               ${Object.entries(ageBuckets).map(([label, count], i) => {
@@ -2615,21 +2679,6 @@ const App = (() => {
             </div>
           </div>
           <div class="card">
-            <div class="card-header"><h3>Lead Source</h3></div>
-            <div class="card-body">
-              ${sourceSorted.map(([src, count], i) => {
-                const pct = (count / maxSource * 100).toFixed(0);
-                return `<div class="bar-row">
-                  <div class="bar-label">${esc(src)}</div>
-                  <div class="bar-track"><div class="bar-fill" style="width:${pct}%;background:${COLORS[i % COLORS.length]}"><span>${count}</span></div></div>
-                </div>`;
-              }).join('')}
-            </div>
-          </div>
-        </div>
-
-        <div style="display:grid; grid-template-columns: 1fr 1fr; gap: 20px;">
-          <div class="card">
             <div class="card-header"><h3>Restaurant Type</h3></div>
             <div class="card-body">
               ${typeSorted.map(([type, count], i) => {
@@ -2641,20 +2690,29 @@ const App = (() => {
               }).join('')}
             </div>
           </div>
-          <div class="card">
-            <div class="card-header"><h3>Rep Action Rate</h3></div>
-            <div class="card-body">
-              ${repSorted.map(([id, r], i) => {
-                const actionPct = r.total > 0 ? (r.contacted / r.total * 100).toFixed(0) : 0;
-                const dealPct = r.total > 0 ? (r.withDeals / r.total * 100).toFixed(0) : 0;
-                return `<div style="display:flex;align-items:center;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--border)">
-                  <span style="font-weight:600;min-width:120px">${esc(owners[id] || 'ID: ' + id)}</span>
-                  <span style="font-size:12px;color:var(--muted)">${r.total} leads</span>
-                  <span style="font-size:12px;font-weight:700;color:${parseInt(actionPct) >= 70 ? 'var(--green)' : parseInt(actionPct) >= 40 ? 'var(--amber)' : 'var(--red)'}">${actionPct}% contacted</span>
-                  <span style="font-size:12px;font-weight:700;color:var(--purple)">${dealPct}% → deal</span>
-                </div>`;
-              }).join('')}
-            </div>
+        </div>
+
+        <div class="card">
+          <div class="card-header"><h3>Rep Action Rate</h3></div>
+          <div class="card-body" style="padding:0;overflow-x:auto">
+            <table>
+              <thead><tr><th>Rep</th><th>Total Leads</th><th>Contacted</th><th>No Action</th><th>Contact Rate</th><th>Deals Created</th><th>Conversion</th></tr></thead>
+              <tbody>
+                ${repSorted.map(([id, r], i) => {
+                  const actionPct = r.total > 0 ? (r.contacted / r.total * 100).toFixed(0) : 0;
+                  const dealPct = r.total > 0 ? (r.withDeals / r.total * 100).toFixed(0) : 0;
+                  return `<tr>
+                    <td style="font-weight:700">${esc(owners[id] || 'ID: ' + id)}</td>
+                    <td style="text-align:center">${r.total}</td>
+                    <td style="text-align:center;color:var(--green)">${r.contacted}</td>
+                    <td style="text-align:center;color:${r.noAction > 0 ? 'var(--red)' : 'var(--green)'}">${r.noAction}</td>
+                    <td style="text-align:center;font-weight:700;color:${parseInt(actionPct) >= 70 ? 'var(--green)' : parseInt(actionPct) >= 40 ? 'var(--amber)' : 'var(--red)'}">${actionPct}%</td>
+                    <td style="text-align:center;color:var(--purple);font-weight:600">${r.withDeals}</td>
+                    <td style="text-align:center;font-weight:700;color:var(--purple)">${dealPct}%</td>
+                  </tr>`;
+                }).join('')}
+              </tbody>
+            </table>
           </div>
         </div>
 
@@ -2666,12 +2724,11 @@ const App = (() => {
               <tbody>
                 ${unassigned.map(c => {
                   const days = daysSince(c.properties.createdate);
-                  const src = c.properties.hs_analytics_source || c.properties.hs_object_source_label || '—';
                   return `<tr>
                     <td style="font-weight:700">${esc(c.properties.name || '—')}</td>
                     <td>${new Date(c.properties.createdate).toLocaleDateString('en-US',{month:'short',day:'numeric'})}</td>
                     <td>${ageBadge(days)}</td>
-                    <td>${esc(src)}</td>
+                    <td>${esc(getSource(c))}</td>
                     <td>${esc(REST_TYPE_LABELS[c.properties.industrytype] || c.properties.industrytype || '—')}</td>
                     <td>${esc([c.properties.city, c.properties.state].filter(Boolean).join(', ') || '—')}</td>
                   </tr>`;
@@ -2689,13 +2746,12 @@ const App = (() => {
               <tbody>
                 ${notContacted.sort((a,b) => new Date(a.properties.createdate) - new Date(b.properties.createdate)).map(c => {
                   const days = daysSince(c.properties.createdate);
-                  const src = c.properties.hs_analytics_source || c.properties.hs_object_source_label || '—';
                   return `<tr>
                     <td style="font-weight:700">${esc(c.properties.name || '—')}</td>
                     <td>${new Date(c.properties.createdate).toLocaleDateString('en-US',{month:'short',day:'numeric'})}</td>
                     <td>${ageBadge(days)}</td>
-                    <td>${esc(owners[c.properties.hubspot_owner_id] || '<span style="color:var(--red)">Unassigned</span>')}</td>
-                    <td>${esc(src)}</td>
+                    <td>${c.properties.hubspot_owner_id ? esc(owners[c.properties.hubspot_owner_id] || '—') : '<span style="color:var(--red);font-weight:600">Unassigned</span>'}</td>
+                    <td>${esc(getSource(c))}</td>
                     <td>${esc(REST_TYPE_LABELS[c.properties.industrytype] || c.properties.industrytype || '—')}</td>
                   </tr>`;
                 }).join('')}
@@ -2708,19 +2764,18 @@ const App = (() => {
           <div class="card-header"><h3>All New Leads (${fmtN(all.length)})</h3></div>
           <div class="card-body" style="padding:0;overflow-x:auto;max-height:600px;overflow-y:auto">
             <table>
-              <thead><tr><th>Company</th><th>Created</th><th>Age</th><th>Action</th><th>Contacts</th><th>Owner</th><th>Source</th><th>Type</th><th>City</th></tr></thead>
+              <thead><tr><th>Company</th><th>Created</th><th>Age</th><th>Action</th><th>Touchpoints</th><th>Owner</th><th>Source</th><th>Type</th><th>City</th></tr></thead>
               <tbody>
                 ${all.map(c => {
                   const days = daysSince(c.properties.createdate);
-                  const src = c.properties.hs_analytics_source || c.properties.hs_object_source_label || '—';
                   return `<tr>
                     <td style="font-weight:700">${esc(c.properties.name || '—')}</td>
                     <td style="white-space:nowrap">${new Date(c.properties.createdate).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'})}</td>
                     <td>${ageBadge(days)}</td>
                     <td>${actionBadge(c)}</td>
                     <td style="text-align:center">${c.properties.num_contacted_notes || '0'}</td>
-                    <td>${esc(owners[c.properties.hubspot_owner_id] || '—')}</td>
-                    <td>${esc(src)}</td>
+                    <td>${c.properties.hubspot_owner_id ? esc(owners[c.properties.hubspot_owner_id] || '—') : '<span style="color:var(--red)">—</span>'}</td>
+                    <td>${esc(getSource(c))}</td>
                     <td>${esc(REST_TYPE_LABELS[c.properties.industrytype] || c.properties.industrytype || '—')}</td>
                     <td>${esc([c.properties.city, c.properties.state].filter(Boolean).join(', ') || '—')}</td>
                   </tr>`;
@@ -2731,6 +2786,7 @@ const App = (() => {
         </div>
       `;
       $('leads-action-donut').innerHTML = buildDonut(actionDonut);
+      $('leads-source-donut').innerHTML = buildDonut(sourceDonut);
     } catch (e) {
       $('content').innerHTML = `<div class="loading-state" style="color:var(--red)">Error: ${esc(e.message)}</div>`;
     }
@@ -3163,7 +3219,7 @@ const App = (() => {
     if (sessionToken) boot();
   });
 
-  return { login, disconnect, refresh, navigate, setDatePreset, setCustomDate, addUser, changePassword, toggleAdmin, deleteUser };
+  return { login, disconnect, refresh, navigate, setDatePreset, setCustomDate, setLeadsFilterSource, setLeadsFilterRep, addUser, changePassword, toggleAdmin, deleteUser };
 })();
 </script>
 </body>
