@@ -248,6 +248,7 @@
       <a href="#" data-view="scorecard"><i class="icon">&#x1f3c6;</i><span>Rep Scorecard</span></a>
       <a href="#" data-view="repactivity"><i class="icon">&#x1f4c5;</i><span>Rep Activity</span></a>
       <a href="#" data-view="leaderboard"><i class="icon">&#x1f525;</i><span>Activity Board</span></a>
+      <a href="#" data-view="cleanroom"><i class="icon">&#x1f9f9;</i><span>Clean Your Room</span></a>
       <div class="nav-label">Analytics</div>
       <a href="#" data-view="health"><i class="icon">&#x1f49a;</i><span>Customer Health</span></a>
       <a href="#" data-view="geo"><i class="icon">&#x1f4cd;</i><span>Geographic</span></a>
@@ -432,6 +433,7 @@ const App = (() => {
     pipeline: 'Sales Pipeline', velocity: 'Sales Velocity & Funnel',
     reps: 'Deals by Rep', scorecard: 'Rep Scorecard',
     repactivity: 'Rep Activity', leaderboard: 'Activity Leaderboard',
+    cleanroom: 'Clean Your Room',
     health: 'Customer Health & Churn', geo: 'Geographic Performance',
     leadsource: 'Lead Source Analysis', tickets: 'Ticket Analytics',
     contacts: 'Contacts Overview', companies: 'Companies Overview',
@@ -449,7 +451,7 @@ const App = (() => {
   function render() {
     const c = $('content');
     c.innerHTML = '<div class="loading-state"><div class="spinner"></div> Loading data...</div>';
-    const renderers = { dashboard: renderDashboard, revenue: renderRevenue, pipeline: renderPipeline, velocity: renderVelocity, reps: renderReps, scorecard: renderScorecard, repactivity: renderRepActivity, leaderboard: renderLeaderboard, health: renderHealth, geo: renderGeo, leadsource: renderLeadSource, tickets: renderTickets, contacts: renderContacts, companies: renderCompanies };
+    const renderers = { dashboard: renderDashboard, revenue: renderRevenue, pipeline: renderPipeline, velocity: renderVelocity, reps: renderReps, scorecard: renderScorecard, repactivity: renderRepActivity, leaderboard: renderLeaderboard, cleanroom: renderCleanRoom, health: renderHealth, geo: renderGeo, leadsource: renderLeadSource, tickets: renderTickets, contacts: renderContacts, companies: renderCompanies };
     (renderers[currentView] || renderDashboard)();
   }
 
@@ -1032,6 +1034,182 @@ const App = (() => {
                 }).join('')}
               </tbody>
             </table>
+          </div>
+        </div>
+      `;
+    } catch (e) {
+      $('content').innerHTML = `<div class="loading-state" style="color:var(--red)">Error: ${esc(e.message)}</div>`;
+    }
+  }
+
+  // ── Clean Your Room ──────────────────────────────────────────
+  async function renderCleanRoom() {
+    try {
+      const [deals, tasks, meetings] = await Promise.all([
+        getCachedSearch('deals_all', 'deals', ['dealstage','amount','hubspot_owner_id','dealname','closedate','hs_is_closed_won','hs_is_closed_lost','createdate','notes_last_contacted']),
+        getCachedSearch('tasks_all', 'tasks', ['hs_task_subject','hs_task_status','hs_task_priority','hubspot_owner_id','hs_timestamp','hs_task_type','hs_createdate']),
+        getCachedSearch('meetings_all', 'meetings', ['hs_meeting_title','hs_activity_type','hs_meeting_outcome','hs_meeting_start_time','hubspot_owner_id','hs_createdate'], [], [{ propertyName: 'hs_createdate', direction: 'DESCENDING' }]),
+      ]);
+
+      const now = new Date();
+
+      // ── Stale Deals: open deals sitting in a stage too long ──
+      const openDeals = deals.results.filter(d => !['closedwon','closedlost','3060460231','3069369052','2986384064'].includes(d.properties.dealstage));
+      const staleDeals = openDeals.map(d => {
+        const created = new Date(d.properties.createdate);
+        const age = Math.floor((now - created) / 86400000);
+        const lastContact = d.properties.notes_last_contacted ? new Date(d.properties.notes_last_contacted) : null;
+        const daysSinceContact = lastContact ? Math.floor((now - lastContact) / 86400000) : age;
+        return { ...d, age, daysSinceContact };
+      }).filter(d => d.age >= 14 || d.daysSinceContact >= 7).sort((a, b) => b.daysSinceContact - a.daysSinceContact);
+
+      // ── Overdue Tasks: past due date and not completed ──
+      const overdueTasks = tasks.results.filter(t => {
+        if (t.properties.hs_task_status === 'COMPLETED') return false;
+        const due = new Date(t.properties.hs_timestamp);
+        return due < now;
+      }).sort((a, b) => new Date(a.properties.hs_timestamp) - new Date(b.properties.hs_timestamp));
+
+      // ── Not Started Tasks ──
+      const notStarted = tasks.results.filter(t => t.properties.hs_task_status === 'NOT_STARTED');
+
+      // ── Meetings with no outcome (no follow-up) ──
+      const noOutcomeMeetings = meetings.results.filter(m => {
+        const startTime = new Date(m.properties.hs_meeting_start_time);
+        return startTime < now && !m.properties.hs_meeting_outcome;
+      });
+
+      // ── No-show meetings not rescheduled ──
+      const noShows = meetings.results.filter(m => m.properties.hs_meeting_outcome === 'NO_SHOW');
+
+      // ── Deals with no amount ──
+      const noAmountDeals = openDeals.filter(d => !d.properties.amount || parseFloat(d.properties.amount) === 0);
+
+      // ── Per-rep issue counts ──
+      const repIssues = {};
+      const addIssue = (oid, type) => {
+        if (!oid) return;
+        if (!repIssues[oid]) repIssues[oid] = { stale: 0, overdue: 0, notStarted: 0, noOutcome: 0, noAmount: 0, total: 0 };
+        repIssues[oid][type]++;
+        repIssues[oid].total++;
+      };
+      staleDeals.forEach(d => addIssue(d.properties.hubspot_owner_id, 'stale'));
+      overdueTasks.forEach(t => addIssue(t.properties.hubspot_owner_id, 'overdue'));
+      notStarted.forEach(t => addIssue(t.properties.hubspot_owner_id, 'notStarted'));
+      noOutcomeMeetings.forEach(m => addIssue(m.properties.hubspot_owner_id, 'noOutcome'));
+      noAmountDeals.forEach(d => addIssue(d.properties.hubspot_owner_id, 'noAmount'));
+
+      const repSorted = Object.entries(repIssues).sort((a, b) => b[1].total - a[1].total);
+      const totalIssues = staleDeals.length + overdueTasks.length + notStarted.length + noOutcomeMeetings.length + noAmountDeals.length;
+
+      $('content').innerHTML = `
+        <div class="stats-row">
+          <div class="stat-card"><div class="label">Total Issues</div><div class="value ${totalIssues > 20 ? 'red' : 'amber'}">${fmtN(totalIssues)}</div></div>
+          <div class="stat-card"><div class="label">Stale Deals</div><div class="value red">${fmtN(staleDeals.length)}</div><div class="sub">14+ days or 7+ days no contact</div></div>
+          <div class="stat-card"><div class="label">Overdue Tasks</div><div class="value red">${fmtN(overdueTasks.length)}</div></div>
+          <div class="stat-card"><div class="label">Not Started Tasks</div><div class="value amber">${fmtN(notStarted.length)}</div></div>
+          <div class="stat-card"><div class="label">No-Show Meetings</div><div class="value amber">${fmtN(noShows.length)}</div></div>
+          <div class="stat-card"><div class="label">Deals Missing Amount</div><div class="value amber">${fmtN(noAmountDeals.length)}</div></div>
+        </div>
+
+        <div class="card">
+          <div class="card-header"><h3>Issues by Rep — Who Needs to Clean Up?</h3></div>
+          <div class="card-body" style="padding:0; overflow-x:auto;">
+            <table>
+              <thead><tr><th>Rep</th><th>Total Issues</th><th>Stale Deals</th><th>Overdue Tasks</th><th>Not Started</th><th>No Outcome Meetings</th><th>No Amount</th></tr></thead>
+              <tbody>
+                ${repSorted.map(([id, r]) => `<tr>
+                  <td style="font-weight:700">${esc(owners[id] || 'ID: ' + id)}</td>
+                  <td><span class="badge ${r.total > 10 ? 'badge-red' : r.total > 5 ? 'badge-amber' : 'badge-green'}">${r.total}</span></td>
+                  <td style="color:var(--red);font-weight:600">${r.stale || '—'}</td>
+                  <td style="color:var(--red);font-weight:600">${r.overdue || '—'}</td>
+                  <td>${r.notStarted || '—'}</td>
+                  <td>${r.noOutcome || '—'}</td>
+                  <td>${r.noAmount || '—'}</td>
+                </tr>`).join('')}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <div style="display:grid; grid-template-columns: 1fr 1fr; gap: 20px;">
+          <div class="card">
+            <div class="card-header"><h3>Stale Deals — Needs Attention</h3></div>
+            <div class="card-body" style="padding:0; max-height:400px; overflow-y:auto;">
+              <table>
+                <thead><tr><th>Deal</th><th>Stage</th><th>Rep</th><th>Age</th><th>Last Contact</th></tr></thead>
+                <tbody>
+                  ${staleDeals.slice(0, 30).map(d => {
+                    const stage = STAGE_MAP[d.properties.dealstage];
+                    const contactClass = d.daysSinceContact > 14 ? 'badge-red' : d.daysSinceContact > 7 ? 'badge-amber' : 'badge-green';
+                    return `<tr>
+                      <td style="font-weight:600;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${esc(d.properties.dealname || '—')}</td>
+                      <td><span class="badge" style="background:${stage?.color || '#999'}22; color:${stage?.color || '#999'}">${esc(stage?.label || '—')}</span></td>
+                      <td>${esc(owners[d.properties.hubspot_owner_id] || '—')}</td>
+                      <td>${d.age}d</td>
+                      <td><span class="badge ${contactClass}">${d.daysSinceContact}d ago</span></td>
+                    </tr>`;
+                  }).join('') || '<tr><td colspan="5" style="text-align:center;color:var(--green);padding:20px">All clean!</td></tr>'}
+                </tbody>
+              </table>
+            </div>
+          </div>
+          <div class="card">
+            <div class="card-header"><h3>Overdue Tasks</h3></div>
+            <div class="card-body" style="padding:0; max-height:400px; overflow-y:auto;">
+              <table>
+                <thead><tr><th>Task</th><th>Rep</th><th>Due Date</th><th>Overdue</th></tr></thead>
+                <tbody>
+                  ${overdueTasks.slice(0, 30).map(t => {
+                    const due = new Date(t.properties.hs_timestamp);
+                    const overdueDays = Math.floor((now - due) / 86400000);
+                    const odClass = overdueDays > 7 ? 'badge-red' : 'badge-amber';
+                    return `<tr>
+                      <td style="font-weight:600;max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${esc(t.properties.hs_task_subject || '—')}</td>
+                      <td>${esc(owners[t.properties.hubspot_owner_id] || '—')}</td>
+                      <td>${due.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}</td>
+                      <td><span class="badge ${odClass}">${overdueDays}d</span></td>
+                    </tr>`;
+                  }).join('') || '<tr><td colspan="4" style="text-align:center;color:var(--green);padding:20px">No overdue tasks!</td></tr>'}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        <div style="display:grid; grid-template-columns: 1fr 1fr; gap: 20px;">
+          <div class="card">
+            <div class="card-header"><h3>Deals Missing Amount</h3></div>
+            <div class="card-body" style="padding:0; max-height:300px; overflow-y:auto;">
+              <table>
+                <thead><tr><th>Deal</th><th>Stage</th><th>Rep</th></tr></thead>
+                <tbody>
+                  ${noAmountDeals.slice(0, 20).map(d => {
+                    const stage = STAGE_MAP[d.properties.dealstage];
+                    return `<tr>
+                      <td style="font-weight:600">${esc(d.properties.dealname || '—')}</td>
+                      <td><span class="badge" style="background:${stage?.color || '#999'}22; color:${stage?.color || '#999'}">${esc(stage?.label || '—')}</span></td>
+                      <td>${esc(owners[d.properties.hubspot_owner_id] || '—')}</td>
+                    </tr>`;
+                  }).join('') || '<tr><td colspan="3" style="text-align:center;color:var(--green);padding:20px">All deals have amounts!</td></tr>'}
+                </tbody>
+              </table>
+            </div>
+          </div>
+          <div class="card">
+            <div class="card-header"><h3>No-Show Meetings (Need Reschedule)</h3></div>
+            <div class="card-body" style="padding:0; max-height:300px; overflow-y:auto;">
+              <table>
+                <thead><tr><th>Meeting</th><th>Rep</th><th>Date</th></tr></thead>
+                <tbody>
+                  ${noShows.slice(0, 20).map(m => `<tr>
+                    <td style="font-weight:600;max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${esc(m.properties.hs_meeting_title || '(No title)')}</td>
+                    <td>${esc(owners[m.properties.hubspot_owner_id] || '—')}</td>
+                    <td>${m.properties.hs_meeting_start_time ? new Date(m.properties.hs_meeting_start_time).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : '—'}</td>
+                  </tr>`).join('') || '<tr><td colspan="3" style="text-align:center;color:var(--green);padding:20px">No no-shows!</td></tr>'}
+                </tbody>
+              </table>
+            </div>
           </div>
         </div>
       `;
@@ -1882,6 +2060,8 @@ const App = (() => {
     companies: 'createdate',
     tickets: 'createdate',
     meetings: 'hs_meeting_start_time',
+    tasks: 'hs_createdate',
+    calls: 'hs_createdate',
   };
 
   async function getCachedSearch(key, objectType, props, filters = [], sorts = []) {
