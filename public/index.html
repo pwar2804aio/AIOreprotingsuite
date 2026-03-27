@@ -218,15 +218,13 @@
 <!-- ═══ AUTH SCREEN ═══ -->
 <div id="auth-screen">
   <div class="auth-card">
-    <h1>HubSpot Reports</h1>
-    <p>Connect your HubSpot account to view real-time CRM reports and analytics.</p>
-    <input type="password" id="token-input" placeholder="Paste your HubSpot Private App Token" autocomplete="off">
-    <button class="btn-primary" onclick="App.connect()">Connect to HubSpot</button>
+    <h1>AIO Reports</h1>
+    <p>Sign in to access your CRM reports and analytics dashboard.</p>
+    <input type="text" id="login-username" placeholder="Username" autocomplete="username">
+    <input type="password" id="login-password" placeholder="Password" autocomplete="current-password">
+    <button class="btn-primary" onclick="App.login()">Sign In</button>
     <div id="auth-error" class="error hidden"></div>
-    <div class="help">
-      To get a token: HubSpot Settings &rarr; Integrations &rarr; Private Apps &rarr; Create.<br>
-      Scopes needed: <strong>crm.objects.contacts.read</strong>, <strong>crm.objects.companies.read</strong>, <strong>crm.objects.deals.read</strong>, <strong>crm.objects.owners.read</strong>
-    </div>
+    <div class="help">Contact your admin if you need access.</div>
   </div>
 </div>
 
@@ -293,7 +291,8 @@
 // ═══════════════════════════════════════════════════════════════════════
 
 const App = (() => {
-  let token = localStorage.getItem('hs_report_token') || '';
+  let sessionToken = localStorage.getItem('aio_session') || '';
+  let currentUser = localStorage.getItem('aio_user') || '';
   let cache = {};
   let currentView = 'dashboard';
   let owners = {};
@@ -344,7 +343,7 @@ const App = (() => {
   async function api(path, method = 'GET', body = null) {
     const opts = {
       method,
-      headers: { 'Content-Type': 'application/json', 'x-hubspot-token': token },
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${sessionToken}` },
     };
     if (body) opts.body = JSON.stringify(body);
     // Split path and query string, pass HubSpot path as hsPath param
@@ -352,6 +351,7 @@ const App = (() => {
     const params = new URLSearchParams(qs || '');
     params.set('hsPath', basePath);
     const res = await fetch(`/api/proxy?${params.toString()}`, opts);
+    if (res.status === 401) { disconnect(); throw new Error('Session expired. Please sign in again.'); }
     if (!res.ok) throw new Error(`API ${res.status}`);
     return res.json();
   }
@@ -381,43 +381,56 @@ const App = (() => {
   }
 
   // ── Init ──────────────────────────────────────────────────────
-  async function connect() {
-    const input = $('token-input');
-    const t = input.value.trim();
-    if (!t) return;
+  async function login() {
+    const username = $('login-username').value.trim();
+    const password = $('login-password').value.trim();
+    if (!username || !password) return;
     $('auth-error').classList.add('hidden');
     try {
-      token = t;
-      // Validate token by fetching contacts (most common scope)
-      const res = await api('crm/v3/objects/contacts?limit=1');
-      if (!res.results) throw new Error('Invalid response');
-      localStorage.setItem('hs_report_token', t);
-      // Try loading owners (optional scope)
+      const res = await fetch('/api/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username, password }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Login failed');
+      sessionToken = data.token;
+      currentUser = data.user;
+      localStorage.setItem('aio_session', sessionToken);
+      localStorage.setItem('aio_user', currentUser);
       owners = {};
       try {
         const ownRes = await api('crm/v3/owners?limit=100');
         if (ownRes.results) ownRes.results.forEach(o => { owners[o.id] = `${o.firstName || ''} ${o.lastName || ''}`.trim() || o.email || 'Unknown'; });
-      } catch (e) { /* owners scope not available, that's ok */ }
+      } catch (e) { /* owners scope not available */ }
       boot();
     } catch (e) {
-      $('auth-error').textContent = 'Connection failed: ' + e.message + '. Check your token and try again.';
+      $('auth-error').textContent = e.message;
       $('auth-error').classList.remove('hidden');
-      token = '';
+      sessionToken = '';
+      currentUser = '';
     }
   }
 
   function disconnect() {
-    token = '';
+    sessionToken = '';
+    currentUser = '';
     cache = {};
-    localStorage.removeItem('hs_report_token');
+    localStorage.removeItem('aio_session');
+    localStorage.removeItem('aio_user');
     $('app').classList.add('hidden');
     $('auth-screen').classList.remove('hidden');
-    $('token-input').value = '';
+    $('login-username').value = '';
+    $('login-password').value = '';
   }
 
   async function boot() {
+    if (!sessionToken) return;
     $('auth-screen').classList.add('hidden');
     $('app').classList.remove('hidden');
+    // Show logged-in user in sidebar
+    const footer = document.querySelector('#sidebar .sidebar-footer');
+    if (footer) footer.innerHTML = `<span class="dot"></span>Signed in as <strong>${currentUser}</strong>`;
     if (!Object.keys(owners).length) {
       try {
         const res = await api('crm/v3/owners?limit=100');
@@ -2107,12 +2120,12 @@ const App = (() => {
     document.querySelectorAll('#sidebar nav a[data-view]').forEach(a => {
       a.addEventListener('click', e => { e.preventDefault(); navigate(a.dataset.view); });
     });
-    $('token-input').addEventListener('keydown', e => { if (e.key === 'Enter') connect(); });
-    // Auto-connect if token saved
-    if (token) boot();
+    $('login-password').addEventListener('keydown', e => { if (e.key === 'Enter') login(); });
+    // Auto-login if session saved
+    if (sessionToken) boot();
   });
 
-  return { connect, disconnect, refresh, navigate, setDatePreset, setCustomDate };
+  return { login, disconnect, refresh, navigate, setDatePreset, setCustomDate };
 })();
 </script>
 </body>
