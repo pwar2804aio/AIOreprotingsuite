@@ -362,6 +362,11 @@ const App = (() => {
     params.set('hsPath', basePath);
     const res = await fetch(`/api/proxy?${params.toString()}`, opts);
     if (res.status === 401) { disconnect(); throw new Error('Session expired. Please sign in again.'); }
+    if (res.status === 429) {
+      const wait = parseInt(res.headers.get('Retry-After') || '2') * 1000;
+      await new Promise(r => setTimeout(r, wait));
+      return api(path, method, body);
+    }
     if (!res.ok) throw new Error(`API ${res.status}`);
     return res.json();
   }
