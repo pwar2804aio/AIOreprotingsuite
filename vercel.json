@@ -1,7 +1,3 @@
 {
-  "version": 2,
-  "outputDirectory": "public",
-  "rewrites": [
-    { "source": "/api/hubspot/:path*", "destination": "/api/hubspot/:path*" }
-  ]
+  "version": 2
 }
