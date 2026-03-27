@@ -357,7 +357,7 @@ const App = (() => {
       res.results.forEach(o => { owners[o.id] = `${o.firstName || ''} ${o.lastName || ''}`.trim() || o.email || 'Unknown'; });
       boot();
     } catch (e) {
-      $('auth-error').textContent = 'Invalid token. Check your HubSpot Private App token and scopes.';
+      $('auth-error').textContent = 'Connection failed: ' + e.message + '. Check your token and try again.';
       $('auth-error').classList.remove('hidden');
       token = '';
     }
