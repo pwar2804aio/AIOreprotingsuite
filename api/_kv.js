@@ -1,7 +1,7 @@
-// Vercel KV (Upstash Redis) REST API helper — no npm packages needed
+// Upstash Redis REST API helper — no npm packages needed
 
-const KV_URL = () => process.env.KV_REST_API_URL;
-const KV_TOKEN = () => process.env.KV_REST_API_TOKEN;
+const KV_URL = () => process.env.KV_REST_API_URL || process.env.UPSTASH_REDIS_REST_URL;
+const KV_TOKEN = () => process.env.KV_REST_API_TOKEN || process.env.UPSTASH_REDIS_REST_TOKEN;
 
 function isConfigured() {
   return !!(KV_URL() && KV_TOKEN());
