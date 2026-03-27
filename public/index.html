@@ -191,6 +191,16 @@
   .loading-state { display: flex; align-items: center; justify-content: center; gap: 10px; padding: 60px; color: var(--muted); font-size: 14px; }
 
   /* ─── Responsive ─── */
+  /* ─── Date Filter ─── */
+  .date-filter { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+  .date-sep { color: var(--muted); font-size: 12px; margin: 0 2px; }
+  .date-input {
+    padding: 5px 8px; border: 1.5px solid var(--border); border-radius: 6px;
+    font-size: 12px; font-family: inherit; color: var(--text); background: #fff;
+    width: 130px; transition: border-color .15s;
+  }
+  .date-input:focus { outline: none; border-color: var(--primary); }
+
   @media (max-width: 768px) {
     #sidebar { width: 60px; }
     #sidebar .brand small, #sidebar nav .nav-label, #sidebar nav a span, #sidebar .sidebar-footer { display: none; }
@@ -246,6 +256,17 @@
     <div id="topbar">
       <h2 id="page-title">Dashboard</h2>
       <div class="actions">
+        <div class="date-filter">
+          <button class="btn btn-secondary btn-sm" onclick="App.setDatePreset('today')">Today</button>
+          <button class="btn btn-secondary btn-sm" onclick="App.setDatePreset('week')">This Week</button>
+          <button class="btn btn-secondary btn-sm" onclick="App.setDatePreset('month')">This Month</button>
+          <button class="btn btn-secondary btn-sm" onclick="App.setDatePreset('quarter')">This Quarter</button>
+          <button class="btn btn-secondary btn-sm active" onclick="App.setDatePreset('all')">All Time</button>
+          <span class="date-sep">|</span>
+          <input type="date" id="date-from" class="date-input" onchange="App.setCustomDate()">
+          <span class="date-sep">to</span>
+          <input type="date" id="date-to" class="date-input" onchange="App.setCustomDate()">
+        </div>
         <button class="btn btn-outline btn-sm" onclick="App.refresh()"><span class="icon">&#x21bb;</span> Refresh</button>
       </div>
     </div>
@@ -265,6 +286,8 @@ const App = (() => {
   let cache = {};
   let currentView = 'dashboard';
   let owners = {};
+  let dateFrom = '';
+  let dateTo = '';
 
   const $ = id => document.getElementById(id);
   const fmt = n => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(n || 0);
@@ -419,13 +442,66 @@ const App = (() => {
 
   function refresh() { cache = {}; render(); }
 
+  // ── Date Filter ──────────────────────────────────────────────
+  function setDatePreset(preset) {
+    const now = new Date();
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    document.querySelectorAll('.date-filter .btn').forEach(b => b.classList.remove('active'));
+    event.target.classList.add('active');
+
+    if (preset === 'all') {
+      dateFrom = ''; dateTo = '';
+    } else if (preset === 'today') {
+      dateFrom = today.toISOString().slice(0, 10);
+      dateTo = today.toISOString().slice(0, 10);
+    } else if (preset === 'week') {
+      const dow = today.getDay();
+      const monday = new Date(today); monday.setDate(today.getDate() - (dow === 0 ? 6 : dow - 1));
+      dateFrom = monday.toISOString().slice(0, 10);
+      dateTo = today.toISOString().slice(0, 10);
+    } else if (preset === 'month') {
+      const first = new Date(now.getFullYear(), now.getMonth(), 1);
+      dateFrom = first.toISOString().slice(0, 10);
+      dateTo = today.toISOString().slice(0, 10);
+    } else if (preset === 'quarter') {
+      const qMonth = Math.floor(now.getMonth() / 3) * 3;
+      const first = new Date(now.getFullYear(), qMonth, 1);
+      dateFrom = first.toISOString().slice(0, 10);
+      dateTo = today.toISOString().slice(0, 10);
+    }
+    $('date-from').value = dateFrom;
+    $('date-to').value = dateTo;
+    cache = {};
+    render();
+  }
+
+  function setCustomDate() {
+    dateFrom = $('date-from').value || '';
+    dateTo = $('date-to').value || '';
+    document.querySelectorAll('.date-filter .btn').forEach(b => b.classList.remove('active'));
+    cache = {};
+    render();
+  }
+
+  function getDateFilters(dateProp) {
+    const filters = [];
+    if (dateFrom) {
+      filters.push({ propertyName: dateProp, operator: 'GTE', value: new Date(dateFrom + 'T00:00:00Z').getTime().toString() });
+    }
+    if (dateTo) {
+      const end = new Date(dateTo + 'T23:59:59Z');
+      filters.push({ propertyName: dateProp, operator: 'LTE', value: end.getTime().toString() });
+    }
+    return filters;
+  }
+
   // ── Dashboard ────────────────────────────────────────────────
   async function renderDashboard() {
     try {
       const [deals, contacts, companies, tickets] = await Promise.all([
         getCachedSearch('deals_all', 'deals', ['dealstage','amount','hubspot_owner_id','dealname','closedate','hs_is_closed_won','hs_is_closed_lost','pipeline','dealtype']),
-        searchCRM('contacts', [], [], 1),
-        searchCRM('companies', [], [], 1),
+        searchCRM('contacts', [], getDateFilters('createdate'), 1),
+        searchCRM('companies', [], getDateFilters('createdate'), 1),
         getCachedSearch('tickets_all', 'tickets', ['hs_pipeline_stage','hs_ticket_category','hs_ticket_priority','source_type','subject','createdate','hubspot_owner_id']),
       ]);
 
@@ -1055,10 +1131,22 @@ const App = (() => {
   }
 
   // ── Helpers ──────────────────────────────────────────────────
+  // dateProperty map: which date field to filter on per object type
+  const DATE_PROP_MAP = {
+    deals: 'createdate',
+    contacts: 'createdate',
+    companies: 'createdate',
+    tickets: 'createdate',
+    meetings: 'hs_meeting_start_time',
+  };
+
   async function getCachedSearch(key, objectType, props, filters = [], sorts = []) {
-    if (cache[key]) return cache[key];
-    const res = await searchAllCRM(objectType, props, filters, sorts);
-    cache[key] = res;
+    const cacheKey = `${key}_${dateFrom}_${dateTo}`;
+    if (cache[cacheKey]) return cache[cacheKey];
+    const dateProp = DATE_PROP_MAP[objectType] || 'createdate';
+    const allFilters = [...filters, ...getDateFilters(dateProp)];
+    const res = await searchAllCRM(objectType, props, allFilters, sorts);
+    cache[cacheKey] = res;
     return res;
   }
 
@@ -1100,7 +1188,7 @@ const App = (() => {
     if (token) boot();
   });
 
-  return { connect, disconnect, refresh, navigate };
+  return { connect, disconnect, refresh, navigate, setDatePreset, setCustomDate };
 })();
 </script>
 </body>
