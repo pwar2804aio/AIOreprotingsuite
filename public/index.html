@@ -199,6 +199,82 @@
   .user-add-form { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
   .user-add-form input[type="text"], .user-add-form input[type="password"] { flex: 0 0 auto; }
 
+  /* ─── Drill-Down Modal ─── */
+  .drilldown-overlay {
+    position: fixed; inset: 0; background: rgba(0,0,0,.45); z-index: 9999;
+    display: flex; justify-content: flex-end; opacity: 0; transition: opacity .2s;
+  }
+  .drilldown-overlay.active { opacity: 1; }
+  .drilldown-panel {
+    width: min(720px, 90vw); height: 100vh; background: var(--card);
+    box-shadow: -4px 0 24px rgba(0,0,0,.15); display: flex; flex-direction: column;
+    transform: translateX(100%); transition: transform .25s ease;
+  }
+  .drilldown-overlay.active .drilldown-panel { transform: translateX(0); }
+  .drilldown-head {
+    padding: 20px 24px; border-bottom: 1px solid var(--border); display: flex;
+    align-items: center; justify-content: space-between; background: #fafbfc; flex-shrink: 0;
+  }
+  .drilldown-head h3 { font-size: 16px; font-weight: 700; }
+  .drilldown-close {
+    width: 32px; height: 32px; border-radius: 8px; background: #f0f2f5;
+    display: flex; align-items: center; justify-content: center; font-size: 18px;
+    cursor: pointer; transition: background .15s;
+  }
+  .drilldown-close:hover { background: #e2e6ea; }
+  .drilldown-stats { padding: 16px 24px; display: flex; gap: 20px; border-bottom: 1px solid var(--border); flex-shrink: 0; }
+  .drilldown-stat { text-align: center; }
+  .drilldown-stat .dd-val { font-size: 22px; font-weight: 800; }
+  .drilldown-stat .dd-lbl { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .3px; }
+  .drilldown-body { flex: 1; overflow-y: auto; padding: 0; }
+  .drilldown-body table { margin: 0; }
+  .drilldown-body th { position: sticky; top: 0; z-index: 1; }
+
+  /* ─── Interactive Charts ─── */
+  .bar-fill[data-drill] { cursor: pointer; transition: width .5s ease, filter .15s; }
+  .bar-fill[data-drill]:hover { filter: brightness(1.15); }
+  .donut-svg path[data-drill] { cursor: pointer; transition: opacity .15s; }
+  .donut-svg path[data-drill]:hover { opacity: 1 !important; }
+  .donut-legend-item[data-drill] { cursor: pointer; border-radius: 4px; padding: 2px 6px; margin: -2px -6px; transition: background .15s; }
+  .donut-legend-item[data-drill]:hover { background: #f0f2f5; }
+  .stat-card[data-drill] { cursor: pointer; transition: box-shadow .15s, border-color .15s; }
+  .stat-card[data-drill]:hover { box-shadow: var(--shadow-md); border-color: var(--primary); }
+  .funnel-stage[data-drill] { cursor: pointer; }
+  .funnel-stage[data-drill]:hover { background: #e2e6ea; }
+  tr[data-drill] { cursor: pointer; }
+  tr[data-drill]:hover td { background: #eef1f6 !important; }
+
+  /* ─── Universal Filter Bar ─── */
+  .filter-bar {
+    display: flex; gap: 10px; flex-wrap: wrap; padding: 14px 20px;
+    background: var(--card); border: 1px solid var(--border); border-radius: var(--radius);
+    margin-bottom: 20px; align-items: center;
+  }
+  .filter-bar .filter-label { font-size: 11px; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: .5px; }
+  .filter-group { position: relative; }
+  .filter-btn {
+    display: inline-flex; align-items: center; gap: 5px; padding: 6px 12px;
+    background: #f0f2f5; border-radius: 6px; font-size: 12px; font-weight: 600;
+    cursor: pointer; border: 1.5px solid transparent; transition: all .15s;
+  }
+  .filter-btn:hover, .filter-btn.active { border-color: var(--primary); color: var(--primary); }
+  .filter-btn .count { background: var(--primary); color: #fff; font-size: 10px; padding: 1px 6px; border-radius: 10px; }
+  .filter-dropdown {
+    position: absolute; top: calc(100% + 4px); left: 0; z-index: 1000;
+    background: var(--card); border: 1px solid var(--border); border-radius: 8px;
+    box-shadow: var(--shadow-md); min-width: 220px; max-height: 300px; overflow-y: auto;
+    display: none; padding: 6px 0;
+  }
+  .filter-dropdown.show { display: block; }
+  .filter-dropdown label {
+    display: flex; align-items: center; gap: 8px; padding: 7px 14px;
+    font-size: 13px; cursor: pointer; transition: background .1s;
+  }
+  .filter-dropdown label:hover { background: #f7f8fa; }
+  .filter-dropdown input[type="checkbox"] { accent-color: var(--primary); width: 15px; height: 15px; }
+  .filter-clear { font-size: 11px; color: var(--primary); cursor: pointer; font-weight: 600; padding: 4px 8px; border-radius: 4px; }
+  .filter-clear:hover { background: #fff0ed; }
+
   /* ─── Responsive ─── */
   /* ─── Date Filter ─── */
   .date-filter { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
@@ -237,6 +313,18 @@
   </div>
 </div>
 
+<!-- ═══ DRILL-DOWN MODAL ═══ -->
+<div class="drilldown-overlay" id="drilldown" onclick="if(event.target===this)App.closeDrill()">
+  <div class="drilldown-panel">
+    <div class="drilldown-head">
+      <h3 id="drill-title">Details</h3>
+      <div class="drilldown-close" onclick="App.closeDrill()">&times;</div>
+    </div>
+    <div class="drilldown-stats" id="drill-stats"></div>
+    <div class="drilldown-body" id="drill-body"></div>
+  </div>
+</div>
+
 <!-- ═══ MAIN APP ═══ -->
 <div id="app" class="hidden">
   <div id="sidebar">
@@ -258,6 +346,7 @@
       <a href="#" data-view="leaderboard"><i class="icon">&#x1f525;</i><span>Activity Board</span></a>
       <a href="#" data-view="cleanroom"><i class="icon">&#x1f9f9;</i><span>Clean Your Room</span></a>
       <a href="#" data-view="subscriptions"><i class="icon">&#x1f4cb;</i><span>Subscriptions</span></a>
+      <a href="#" data-view="activecustomers"><i class="icon">&#x2705;</i><span>Active Customers</span></a>
       <div class="nav-label">Targets</div>
       <a href="#" data-view="quota"><i class="icon">&#x1f4c8;</i><span>Quota Tracker</span></a>
       <a href="#" data-view="commission"><i class="icon">&#x1f4b5;</i><span>Commission</span></a>
@@ -480,7 +569,7 @@ const App = (() => {
     health: 'Customer Health & Churn', geo: 'Geographic Performance',
     leadsource: 'Lead Source Analysis', tickets: 'Ticket Analytics',
     contacts: 'Contacts Overview', companies: 'Companies Overview',
-    newleads: 'New Leads', quota: 'Quota Tracker', commission: 'Sales Commission', activitygoals: 'Activity Goals', subscriptions: 'Subscriptions',
+    newleads: 'New Leads', quota: 'Quota Tracker', commission: 'Sales Commission', activitygoals: 'Activity Goals', subscriptions: 'Subscriptions', activecustomers: 'Active Customers',
     users: 'Manage Users',
   };
 
@@ -496,7 +585,7 @@ const App = (() => {
   function render() {
     const c = $('content');
     c.innerHTML = '<div class="loading-state"><div class="spinner"></div> Loading data...</div>';
-    const renderers = { dashboard: renderDashboard, revenue: renderRevenue, pipeline: renderPipeline, velocity: renderVelocity, reps: renderReps, scorecard: renderScorecard, repactivity: renderRepActivity, leaderboard: renderLeaderboard, cleanroom: renderCleanRoom, health: renderHealth, geo: renderGeo, leadsource: renderLeadSource, tickets: renderTickets, contacts: renderContacts, companies: renderCompanies, newleads: renderNewLeads, quota: renderQuota, commission: renderCommission, activitygoals: renderActivityGoals, subscriptions: renderSubscriptions, users: renderUsers };
+    const renderers = { dashboard: renderDashboard, revenue: renderRevenue, pipeline: renderPipeline, velocity: renderVelocity, reps: renderReps, scorecard: renderScorecard, repactivity: renderRepActivity, leaderboard: renderLeaderboard, cleanroom: renderCleanRoom, health: renderHealth, geo: renderGeo, leadsource: renderLeadSource, tickets: renderTickets, contacts: renderContacts, companies: renderCompanies, newleads: renderNewLeads, quota: renderQuota, commission: renderCommission, activitygoals: renderActivityGoals, subscriptions: renderSubscriptions, activecustomers: renderActiveCustomers, users: renderUsers };
     (renderers[currentView] || renderDashboard)();
   }
 
@@ -558,6 +647,7 @@ const App = (() => {
   // ── Dashboard ────────────────────────────────────────────────
   async function renderDashboard() {
     try {
+      _drillData = {};
       const [deals, contacts, companies, tickets] = await Promise.all([
         getCachedSearch('deals_all', 'deals', ['dealstage','amount','hubspot_owner_id','dealname','closedate','hs_is_closed_won','hs_is_closed_lost','pipeline','dealtype']),
         searchCRM('contacts', [], getDateFilters('createdate'), 1),
@@ -572,19 +662,30 @@ const App = (() => {
       const totalWon = wonDeals.reduce((s, d) => s + (parseFloat(d.properties.amount) || 0), 0);
       const openTickets = (tickets.results || []).filter(t => !['4','2613142254','2909568704'].includes(t.properties.hs_pipeline_stage));
 
+      // Register drill-downs for dashboard stat cards
+      const drillAllDeals = regDrill('All Deals', allDeals, dealDrillColumns(), dealDrillStats);
+      const drillOpenDeals = regDrill('Open Deals', openDeals, dealDrillColumns(), dealDrillStats);
+      const drillWonDeals = regDrill('Closed Won Deals', wonDeals, dealDrillColumns(), dealDrillStats);
+      const drillTickets = regDrill('Open Tickets', openTickets, [
+        { label: 'Subject', render: t => `<strong>${esc(t.properties.subject || '—')}</strong>` },
+        { label: 'Category', render: t => esc(t.properties.hs_ticket_category || '—') },
+        { label: 'Priority', render: t => esc(t.properties.hs_ticket_priority || '—') },
+        { label: 'Owner', render: t => esc(owners[t.properties.hubspot_owner_id] || '—') },
+      ], recs => [{ label: 'Open Tickets', value: fmtN(recs.length) }]);
+
       $('content').innerHTML = `
         <div class="stats-row">
-          <div class="stat-card">
+          <div class="stat-card" data-drill="${drillAllDeals}">
             <div class="label">Total Deals</div>
             <div class="value">${fmtN(deals.total)}</div>
             <div class="sub">${fmtN(openDeals.length)} currently open</div>
           </div>
-          <div class="stat-card">
+          <div class="stat-card" data-drill="${drillOpenDeals}">
             <div class="label">Pipeline Value</div>
             <div class="value blue">${fmt(totalPipeline)}</div>
-            <div class="sub">Open deal value</div>
+            <div class="sub">Click to see deals</div>
           </div>
-          <div class="stat-card">
+          <div class="stat-card" data-drill="${drillWonDeals}">
             <div class="label">Closed Won</div>
             <div class="value green">${fmt(totalWon)}</div>
             <div class="sub">${fmtN(wonDeals.length)} deals won</div>
@@ -597,7 +698,7 @@ const App = (() => {
             <div class="label">Total Companies</div>
             <div class="value">${fmtN(companies.total)}</div>
           </div>
-          <div class="stat-card">
+          <div class="stat-card" data-drill="${drillTickets}">
             <div class="label">Open Tickets</div>
             <div class="value ${openTickets.length > 50 ? 'red' : 'amber'}">${fmtN(openTickets.length)}</div>
             <div class="sub">${fmtN(tickets.total)} total</div>
@@ -817,8 +918,34 @@ const App = (() => {
   // ── Pipeline Report ──────────────────────────────────────────
   async function renderPipeline() {
     try {
+      _drillData = {};
       const deals = await getCachedSearch('deals_all', 'deals', ['dealstage','amount','hubspot_owner_id','dealname','closedate','hs_is_closed_won','hs_is_closed_lost','dealtype','createdate']);
-      const allDeals = deals.results;
+      const rawDeals = deals.results;
+
+      // Filter defs for pipeline
+      const pipeFilterDefs = [
+        { key: 'stage', label: 'Stage', getter: d => d.properties.dealstage || 'unknown' },
+        { key: 'owner', label: 'Owner', getter: d => d.properties.hubspot_owner_id || '__none__' },
+        { key: 'type', label: 'Deal Type', getter: d => d.properties.dealtype || 'Unknown' },
+      ];
+      const pipeFilterOpts = pipeFilterDefs.map(f => {
+        const counts = {};
+        rawDeals.forEach(r => { const v = f.getter(r); counts[v] = (counts[v] || 0) + 1; });
+        return {
+          key: f.key, label: f.label,
+          options: Object.entries(counts).sort((a,b) => b[1]-a[1]).map(([v, c]) => ({
+            value: v,
+            label: f.key === 'owner' ? (v === '__none__' ? 'Unassigned' : (owners[v] || v)) :
+                   f.key === 'stage' ? (STAGE_MAP[v]?.label || v) :
+                   v === 'newbusiness' ? 'New Business' : v === 'existingbusiness' ? 'Existing' : v,
+            count: c,
+          })),
+        };
+      });
+
+      const allDeals = applyFilters('pipeline', rawDeals, pipeFilterDefs);
+      const pipeState = filterState['pipeline'] || {};
+      const hasFilters = Object.values(pipeState).some(s => s.size > 0);
 
       const stageCounts = {};
       STAGES.forEach(s => stageCounts[s.id] = { count: 0, amount: 0, deals: [] });
@@ -834,26 +961,36 @@ const App = (() => {
       const openStages = STAGES.filter(s => !['closedwon','closedlost','3060460231','3069369052','2986384064'].includes(s.id));
       const totalOpen = openStages.reduce((a, s) => a + (stageCounts[s.id]?.count || 0), 0);
       const totalOpenVal = openStages.reduce((a, s) => a + (stageCounts[s.id]?.amount || 0), 0);
-      const wonCount = stageCounts['closedwon']?.count || 0;
-      const lostCount = stageCounts['closedlost']?.count || 0;
+      const openDeals = allDeals.filter(d => !['closedwon','closedlost','3060460231','3069369052','2986384064'].includes(d.properties.dealstage));
+      const wonDeals = stageCounts['closedwon']?.deals || [];
+      const lostDeals = stageCounts['closedlost']?.deals || [];
+      const wonCount = wonDeals.length;
+      const lostCount = lostDeals.length;
       const winRate = wonCount + lostCount > 0 ? ((wonCount / (wonCount + lostCount)) * 100).toFixed(1) : '—';
 
+      const drillOpen = regDrill('Open Deals', openDeals, dealDrillColumns(), dealDrillStats);
+      const drillWon = regDrill('Closed Won Deals', wonDeals, dealDrillColumns(), dealDrillStats);
+      const drillLost = regDrill('Closed Lost Deals', lostDeals, dealDrillColumns(), dealDrillStats);
+
       $('content').innerHTML = `
+        ${buildFilterBar('pipeline', pipeFilterOpts)}
+        ${hasFilters ? `<div style="font-size:12px;color:var(--muted);margin:-14px 0 14px 0">Showing ${fmtN(allDeals.length)} of ${fmtN(rawDeals.length)} deals</div>` : ''}
         <div class="stats-row">
-          <div class="stat-card"><div class="label">Open Deals</div><div class="value blue">${fmtN(totalOpen)}</div></div>
-          <div class="stat-card"><div class="label">Open Pipeline Value</div><div class="value blue">${fmt(totalOpenVal)}</div></div>
-          <div class="stat-card"><div class="label">Closed Won</div><div class="value green">${fmtN(wonCount)}</div><div class="sub">${fmt(stageCounts['closedwon']?.amount)}</div></div>
-          <div class="stat-card"><div class="label">Closed Lost</div><div class="value red">${fmtN(lostCount)}</div></div>
+          <div class="stat-card" data-drill="${drillOpen}"><div class="label">Open Deals</div><div class="value blue">${fmtN(totalOpen)}</div></div>
+          <div class="stat-card" data-drill="${drillOpen}"><div class="label">Open Pipeline Value</div><div class="value blue">${fmt(totalOpenVal)}</div></div>
+          <div class="stat-card" data-drill="${drillWon}"><div class="label">Closed Won</div><div class="value green">${fmtN(wonCount)}</div><div class="sub">${fmt(stageCounts['closedwon']?.amount)}</div></div>
+          <div class="stat-card" data-drill="${drillLost}"><div class="label">Closed Lost</div><div class="value red">${fmtN(lostCount)}</div></div>
           <div class="stat-card"><div class="label">Win Rate</div><div class="value ${parseFloat(winRate) > 50 ? 'green' : 'amber'}">${winRate}%</div></div>
         </div>
         <div class="card">
-          <div class="card-header"><h3>Pipeline Funnel</h3></div>
+          <div class="card-header"><h3>Pipeline Funnel</h3><span style="font-size:11px;color:var(--muted)">Click any stage to drill down</span></div>
           <div class="card-body">
             <div class="funnel">
               ${STAGES.map(s => {
-                const d = stageCounts[s.id] || { count: 0, amount: 0 };
+                const d = stageCounts[s.id] || { count: 0, amount: 0, deals: [] };
                 const pct = (d.count / maxCount * 100).toFixed(0);
-                return `<div class="funnel-stage">
+                const did = d.deals.length > 0 ? regDrill(s.label + ' Deals', d.deals, dealDrillColumns(), dealDrillStats) : '';
+                return `<div class="funnel-stage" ${did ? `data-drill="${did}"` : ''}>
                   <div class="funnel-name">${esc(s.label)}</div>
                   <div class="funnel-bar-wrap"><div class="funnel-bar" style="width:${pct}%; background:${s.color}"></div><div class="funnel-bar-label">${d.count > 0 ? d.count : ''}</div></div>
                   <div class="funnel-count">${d.count}</div>
@@ -1019,13 +1156,17 @@ const App = (() => {
   // ── Deals by Rep ─────────────────────────────────────────────
   async function renderReps() {
     try {
+      _drillData = {};
       const deals = await getCachedSearch('deals_all', 'deals', ['dealstage','amount','hubspot_owner_id','dealname','closedate','hs_is_closed_won','hs_is_closed_lost','dealtype']);
       const allDeals = deals.results;
 
       const repData = {};
+      const repDeals = {};
       allDeals.forEach(d => {
         const oid = d.properties.hubspot_owner_id || 'unassigned';
         if (!repData[oid]) repData[oid] = { total: 0, open: 0, won: 0, lost: 0, amount: 0, wonAmount: 0 };
+        if (!repDeals[oid]) repDeals[oid] = [];
+        repDeals[oid].push(d);
         repData[oid].total++;
         const amt = parseFloat(d.properties.amount) || 0;
         repData[oid].amount += amt;
@@ -1044,14 +1185,15 @@ const App = (() => {
 
       $('content').innerHTML = `
         <div class="card">
-          <div class="card-header"><h3>Deal Count by Rep</h3></div>
+          <div class="card-header"><h3>Deal Count by Rep</h3><span style="font-size:11px;color:var(--muted)">Click bar to see deals</span></div>
           <div class="card-body">
             <div class="bar-chart">
               ${sorted.filter(([id]) => id !== 'unassigned').slice(0, 15).map(([id, d], i) => {
                 const pct = (d.total / maxDeals * 100).toFixed(0);
+                const did = regDrill((owners[id] || id) + ' — All Deals', repDeals[id] || [], dealDrillColumns(), dealDrillStats);
                 return `<div class="bar-row">
                   <div class="bar-label">${esc(owners[id] || 'ID: ' + id)}</div>
-                  <div class="bar-track"><div class="bar-fill" style="width:${pct}%;background:${COLORS[i % COLORS.length]}"><span>${d.total}</span></div></div>
+                  <div class="bar-track"><div class="bar-fill" data-drill="${did}" style="width:${pct}%;background:${COLORS[i % COLORS.length]}"><span>${d.total}</span></div></div>
                   <div class="bar-val">${fmt(d.amount)}</div>
                 </div>`;
               }).join('')}
@@ -1059,7 +1201,7 @@ const App = (() => {
           </div>
         </div>
         <div class="card">
-          <div class="card-header"><h3>Rep Performance Detail</h3></div>
+          <div class="card-header"><h3>Rep Performance Detail</h3><span style="font-size:11px;color:var(--muted)">Click row to see deals</span></div>
           <div class="card-body" style="padding:0;">
             <table>
               <thead><tr><th>Rep</th><th>Total Deals</th><th>Open</th><th>Won</th><th>Lost</th><th>Win Rate</th><th>Total Value</th><th>Won Value</th></tr></thead>
@@ -1067,7 +1209,8 @@ const App = (() => {
                 ${sorted.map(([id, d]) => {
                   const wr = d.won + d.lost > 0 ? ((d.won / (d.won + d.lost)) * 100).toFixed(0) : '—';
                   const wrClass = wr !== '—' ? (parseFloat(wr) >= 50 ? 'badge-green' : parseFloat(wr) >= 25 ? 'badge-amber' : 'badge-red') : 'badge-gray';
-                  return `<tr>
+                  const did = regDrill((owners[id] || id) + ' — All Deals', repDeals[id] || [], dealDrillColumns(), dealDrillStats);
+                  return `<tr data-drill="${did}">
                     <td style="font-weight:600">${esc(owners[id] || (id === 'unassigned' ? 'Unassigned' : 'ID: ' + id))}</td>
                     <td>${d.total}</td><td>${d.open}</td>
                     <td style="color:var(--green);font-weight:600">${d.won}</td>
@@ -2121,7 +2264,117 @@ const App = (() => {
 
   function esc(s) { const el = document.createElement('span'); el.textContent = s; return el.innerHTML; }
 
-  function buildDonut(items) {
+  // ── Drill-Down System ──────────────────────────────────────
+  let _drillData = {}; // stores drill-down data by ID
+
+  function openDrill(title, stats, tableHTML) {
+    const el = $('drilldown');
+    $('drill-title').textContent = title;
+    $('drill-stats').innerHTML = stats.map(s => `<div class="drilldown-stat"><div class="dd-val ${s.cls || ''}">${s.value}</div><div class="dd-lbl">${s.label}</div></div>`).join('');
+    $('drill-body').innerHTML = tableHTML;
+    el.classList.add('active');
+    document.body.style.overflow = 'hidden';
+  }
+
+  function closeDrill() {
+    $('drilldown').classList.remove('active');
+    document.body.style.overflow = '';
+  }
+
+  // Register drill-down data: returns a drill ID to use in data-drill attribute
+  function regDrill(label, records, columns, statsFn) {
+    const id = 'dd_' + Math.random().toString(36).slice(2, 8);
+    _drillData[id] = { label, records, columns, statsFn };
+    return id;
+  }
+
+  // Handle drill click via event delegation
+  document.addEventListener('click', function(e) {
+    const el = e.target.closest('[data-drill]');
+    if (!el) return;
+    const id = el.dataset.drill;
+    const dd = _drillData[id];
+    if (!dd) return;
+    const { label, records, columns, statsFn } = dd;
+    const stats = statsFn ? statsFn(records) : [{ label: 'Records', value: fmtN(records.length) }];
+    const headers = columns.map(c => `<th>${esc(c.label)}</th>`).join('');
+    const rows = records.map(r => `<tr>${columns.map(c => `<td>${c.render(r)}</td>`).join('')}</tr>`).join('');
+    const tableHTML = `<table><thead><tr>${headers}</tr></thead><tbody>${rows}</tbody></table>`;
+    openDrill(label, stats, tableHTML);
+  });
+
+  // ── Universal Filter Builder ──────────────────────────────
+  // filterState stores active filters per view: { viewName: { filterKey: Set([values]) } }
+  let filterState = {};
+
+  function getFilterSet(view, key) {
+    if (!filterState[view]) filterState[view] = {};
+    if (!filterState[view][key]) filterState[view][key] = new Set();
+    return filterState[view][key];
+  }
+
+  function toggleFilter(view, key, value) {
+    const set = getFilterSet(view, key);
+    if (set.has(value)) set.delete(value); else set.add(value);
+    render();
+  }
+
+  function clearFilter(view, key) {
+    if (filterState[view]) { delete filterState[view][key]; }
+    render();
+  }
+
+  function clearAllFilters(view) {
+    delete filterState[view];
+    render();
+  }
+
+  function buildFilterBar(view, filters) {
+    // filters: [{ key, label, options: [{value, label, count}] }]
+    const state = filterState[view] || {};
+    const hasAny = Object.values(state).some(s => s.size > 0);
+    return `<div class="filter-bar">
+      <span class="filter-label">Filters</span>
+      ${filters.map(f => {
+        const active = state[f.key] || new Set();
+        const btnCls = active.size > 0 ? 'active' : '';
+        const countBadge = active.size > 0 ? `<span class="count">${active.size}</span>` : '';
+        return `<div class="filter-group">
+          <div class="filter-btn ${btnCls}" onclick="this.nextElementSibling.classList.toggle('show');event.stopPropagation()">
+            ${esc(f.label)} ${countBadge} &#x25BE;
+          </div>
+          <div class="filter-dropdown" onclick="event.stopPropagation()">
+            ${f.options.map(o => `<label>
+              <input type="checkbox" ${active.has(o.value) ? 'checked' : ''} onchange="App.toggleFilter('${view}','${f.key}',${JSON.stringify(o.value).replace(/'/g, "\\'")})" />
+              ${esc(o.label)} ${o.count !== undefined ? `<span style="color:var(--muted);font-size:11px;margin-left:auto">(${o.count})</span>` : ''}
+            </label>`).join('')}
+          </div>
+        </div>`;
+      }).join('')}
+      ${hasAny ? `<span class="filter-clear" onclick="App.clearAllFilters('${view}')">Clear all</span>` : ''}
+    </div>`;
+  }
+
+  // Close dropdowns on outside click
+  document.addEventListener('click', () => {
+    document.querySelectorAll('.filter-dropdown.show').forEach(d => d.classList.remove('show'));
+  });
+
+  // Apply filters to a list of records
+  function applyFilters(view, records, filterDefs) {
+    const state = filterState[view] || {};
+    let filtered = records;
+    filterDefs.forEach(f => {
+      const active = state[f.key];
+      if (active && active.size > 0) {
+        filtered = filtered.filter(r => active.has(f.getter(r)));
+      }
+    });
+    return filtered;
+  }
+
+  // ── Interactive Donut ─────────────────────────────────────
+  function buildDonut(items, drillConfig) {
     if (!items.length) return '<div style="color:var(--muted);text-align:center;padding:20px">No data</div>';
     const total = items.reduce((a, b) => a + b.value, 0);
     let acc = 0;
@@ -2138,13 +2391,53 @@ const App = (() => {
       const x2 = cx + r * Math.cos(e1), y2 = cy + r * Math.sin(e1);
       const x3 = cx + r2 * Math.cos(e1), y3 = cy + r2 * Math.sin(e1);
       const x4 = cx + r2 * Math.cos(s1), y4 = cy + r2 * Math.sin(s1);
-      return `<path d="M${x1},${y1} A${r},${r} 0 ${large} 1 ${x2},${y2} L${x3},${y3} A${r2},${r2} 0 ${large} 0 ${x4},${y4} Z" fill="${item.color}" opacity="0.85"/>`;
+      const drillAttr = (drillConfig && item.drillId) ? `data-drill="${item.drillId}"` : '';
+      return `<path d="M${x1},${y1} A${r},${r} 0 ${large} 1 ${x2},${y2} L${x3},${y3} A${r2},${r2} 0 ${large} 0 ${x4},${y4} Z" fill="${item.color}" opacity="0.85" ${drillAttr}/>`;
     }).join('');
 
     const svg = `<svg class="donut-svg" viewBox="0 0 ${size} ${size}">${paths}<text x="${cx}" y="${cy - 4}" text-anchor="middle" font-size="22" font-weight="800" fill="var(--text)">${total}</text><text x="${cx}" y="${cy + 14}" text-anchor="middle" font-size="10" fill="var(--muted)">TOTAL</text></svg>`;
-    const legend = items.map(item => `<div class="donut-legend-item"><div class="donut-legend-color" style="background:${item.color}"></div>${esc(item.label)} <strong>(${item.value})</strong></div>`).join('');
+    const legend = items.map(item => {
+      const drillAttr = (drillConfig && item.drillId) ? `data-drill="${item.drillId}"` : '';
+      return `<div class="donut-legend-item" ${drillAttr}><div class="donut-legend-color" style="background:${item.color}"></div>${esc(item.label)} <strong>(${item.value})</strong></div>`;
+    }).join('');
 
     return `<div class="donut-wrap">${svg}<div class="donut-legend">${legend}</div></div>`;
+  }
+
+  // Helper to make a drill-down for a list of companies
+  function companyDrillColumns() {
+    return [
+      { label: 'Company', render: c => `<strong>${esc(c.properties.name || '—')}</strong>` },
+      { label: 'ARR', render: c => `<span style="font-weight:700">${fmt(c.properties.arr)}</span>` },
+      { label: 'MRR', render: c => fmt(c.properties.mrr || c.properties.monthly_recurring_revenue_mrr) },
+      { label: 'Type', render: c => esc(REST_TYPE_LABELS[c.properties.industrytype] || c.properties.industrytype || '—') },
+      { label: 'Owner', render: c => esc(owners[c.properties.hubspot_owner_id] || '—') },
+    ];
+  }
+  function companyDrillStats(records) {
+    const arr = records.reduce((s, c) => s + (parseFloat(c.properties.arr) || 0), 0);
+    return [
+      { label: 'Companies', value: fmtN(records.length) },
+      { label: 'Total ARR', value: fmt(arr), cls: 'green' },
+    ];
+  }
+
+  // Helper to make a drill-down for a list of deals
+  function dealDrillColumns() {
+    return [
+      { label: 'Deal', render: d => `<strong>${esc(d.properties.dealname || '—')}</strong>` },
+      { label: 'Amount', render: d => `<span style="font-weight:700">${fmt(d.properties.amount)}</span>` },
+      { label: 'Stage', render: d => esc(d.properties.dealstage || '—') },
+      { label: 'Owner', render: d => esc(owners[d.properties.hubspot_owner_id] || '—') },
+      { label: 'Close Date', render: d => d.properties.closedate ? new Date(d.properties.closedate).toLocaleDateString() : '—' },
+    ];
+  }
+  function dealDrillStats(records) {
+    const total = records.reduce((s, d) => s + (parseFloat(d.properties.amount) || 0), 0);
+    return [
+      { label: 'Deals', value: fmtN(records.length) },
+      { label: 'Total Value', value: fmt(total), cls: 'blue' },
+    ];
   }
 
   // ── Quota Tracker ───────────────────────────────────────────
@@ -3298,6 +3591,208 @@ const App = (() => {
     }
   }
 
+  // ── Active Customers ────────────────────────────────────────
+  async function renderActiveCustomers() {
+    try {
+      _drillData = {}; // reset drill data
+      const ACTIVE_STATUSES = ['active','unpaid','paused','scheduled'];
+
+      const companies = await getCachedSearch('ac_companies', 'companies',
+        ['name','subscription_status','arr','mrr','monthly_recurring_revenue_mrr','adyen_processing_arr',
+         'hubspot_owner_id','notes_last_contacted','notes_last_updated','activation_date',
+         'industrytype','cuisine_type','ownership_type','num_associated_contacts','num_contacted_notes',
+         'lifecyclestage','closedate','total_revenue','hs_last_sales_activity_timestamp','city','state'],
+        [{ propertyName: 'subscription_status', operator: 'IN', values: ACTIVE_STATUSES }],
+        [{ propertyName: 'name', direction: 'ASCENDING' }]
+      );
+
+      const rawAll = companies.results;
+      const now = Date.now();
+
+      // Filter defs
+      const filterDefs = [
+        { key: 'status', label: 'Status', getter: c => c.properties.subscription_status || 'unknown' },
+        { key: 'type', label: 'Restaurant Type', getter: c => c.properties.industrytype || 'Unknown' },
+        { key: 'cuisine', label: 'Cuisine', getter: c => c.properties.cuisine_type || 'Unknown' },
+        { key: 'owner', label: 'Owner', getter: c => c.properties.hubspot_owner_id || '__none__' },
+        { key: 'ownership', label: 'Ownership', getter: c => c.properties.ownership_type || 'Unknown' },
+      ];
+
+      // Build filter options from raw data
+      const filterOpts = filterDefs.map(f => {
+        const counts = {};
+        rawAll.forEach(r => { const v = f.getter(r); counts[v] = (counts[v] || 0) + 1; });
+        return {
+          key: f.key, label: f.label,
+          options: Object.entries(counts).sort((a,b) => b[1]-a[1]).map(([v, c]) => ({
+            value: v,
+            label: f.key === 'owner' ? (v === '__none__' ? 'Unassigned' : (owners[v] || v)) :
+                   f.key === 'status' ? (SUB_STATUS_CONFIG[v]?.label || v) :
+                   f.key === 'type' ? (REST_TYPE_LABELS[v] || v) :
+                   f.key === 'ownership' ? (OWN_TYPE_LABELS[v] || v) : v,
+            count: c,
+          })),
+        };
+      });
+
+      // Apply filters
+      const all = applyFilters('activecustomers', rawAll, filterDefs);
+      const activeState = filterState['activecustomers'] || {};
+      const hasFilters = Object.values(activeState).some(s => s.size > 0);
+
+      function daysSince(d) { return d ? Math.floor((now - new Date(d).getTime()) / 86400000) : 999; }
+      function healthBadge(days) {
+        if (days <= 7) return '<span class="badge badge-green">Healthy</span>';
+        if (days <= 21) return '<span class="badge badge-amber">Monitor</span>';
+        if (days <= 45) return '<span class="badge" style="background:#e8481e22;color:var(--red)">At Risk</span>';
+        return '<span class="badge badge-red">No Contact</span>';
+      }
+
+      // Revenue
+      const totalARR = all.reduce((s, c) => s + (parseFloat(c.properties.arr) || 0), 0);
+      const totalMRR = all.reduce((s, c) => s + (parseFloat(c.properties.mrr) || parseFloat(c.properties.monthly_recurring_revenue_mrr) || 0), 0);
+      const totalAdyen = all.reduce((s, c) => s + (parseFloat(c.properties.adyen_processing_arr) || 0), 0);
+      const avgARR = all.length > 0 ? totalARR / all.length : 0;
+
+      // Status breakdown
+      const statusCounts = {};
+      all.forEach(c => { const s = c.properties.subscription_status || 'unknown'; statusCounts[s] = (statusCounts[s] || 0) + 1; });
+
+      // By owner
+      const byOwner = {};
+      all.forEach(c => {
+        const oid = c.properties.hubspot_owner_id || 'unassigned';
+        if (!byOwner[oid]) byOwner[oid] = { arr: 0, count: 0, companies: [] };
+        byOwner[oid].arr += parseFloat(c.properties.arr) || 0;
+        byOwner[oid].count++;
+        byOwner[oid].companies.push(c);
+      });
+      const ownerSorted = Object.entries(byOwner).sort((a, b) => b[1].arr - a[1].arr);
+      const maxOwnerARR = ownerSorted[0]?.[1].arr || 1;
+
+      // By type
+      const byType = {};
+      all.forEach(c => {
+        const t = c.properties.industrytype || 'Unknown';
+        if (!byType[t]) byType[t] = { arr: 0, count: 0, companies: [] };
+        byType[t].arr += parseFloat(c.properties.arr) || 0;
+        byType[t].count++;
+        byType[t].companies.push(c);
+      });
+
+      // Health summary
+      const healthy = all.filter(c => daysSince(c.properties.notes_last_contacted) <= 7);
+      const monitor = all.filter(c => { const d = daysSince(c.properties.notes_last_contacted); return d > 7 && d <= 21; });
+      const atRiskH = all.filter(c => { const d = daysSince(c.properties.notes_last_contacted); return d > 21 && d <= 45; });
+      const noContact = all.filter(c => daysSince(c.properties.notes_last_contacted) > 45);
+
+      // Register drill-downs for stat cards
+      const drillTotal = regDrill('All Active Customers', all, companyDrillColumns(), companyDrillStats);
+      const drillHealthy = regDrill('Healthy Customers (contacted <7d)', healthy, companyDrillColumns(), companyDrillStats);
+      const drillMonitor = regDrill('Monitor (7-21 days)', monitor, companyDrillColumns(), companyDrillStats);
+      const drillAtRisk = regDrill('At Risk (21-45 days)', atRiskH, companyDrillColumns(), companyDrillStats);
+      const drillNoContact = regDrill('No Contact (45+ days)', noContact, companyDrillColumns(), companyDrillStats);
+
+      // Donut with drill-downs per status
+      const statusDonut = Object.entries(statusCounts).map(([s, count]) => {
+        const recs = all.filter(c => c.properties.subscription_status === s);
+        const did = regDrill((SUB_STATUS_CONFIG[s]?.label || s) + ' Customers', recs, companyDrillColumns(), companyDrillStats);
+        return {
+          label: SUB_STATUS_CONFIG[s]?.label || s, value: count,
+          color: SUB_STATUS_CONFIG[s]?.color || '#999', drillId: did,
+        };
+      });
+
+      // Type donut with drill-downs
+      const typeDonut = Object.entries(byType).sort((a,b) => b[1].count - a[1].count).map(([t, d], i) => {
+        const did = regDrill((REST_TYPE_LABELS[t] || t) + ' Customers', d.companies, companyDrillColumns(), companyDrillStats);
+        return { label: REST_TYPE_LABELS[t] || t, value: d.count, color: COLORS[i % COLORS.length], drillId: did };
+      });
+
+      $('content').innerHTML = `
+        ${buildFilterBar('activecustomers', filterOpts)}
+        ${hasFilters ? `<div style="font-size:12px;color:var(--muted);margin:-14px 0 14px 0">Showing ${fmtN(all.length)} of ${fmtN(rawAll.length)} customers</div>` : ''}
+
+        <div class="stats-row">
+          <div class="stat-card" data-drill="${drillTotal}"><div class="label">Active Customers</div><div class="value green">${fmtN(all.length)}</div><div class="sub">Avg ARR ${fmt(avgARR)}</div></div>
+          <div class="stat-card"><div class="label">Total ARR</div><div class="value blue">${fmt(totalARR)}</div></div>
+          <div class="stat-card"><div class="label">Total MRR</div><div class="value purple">${fmt(totalMRR)}</div></div>
+          <div class="stat-card"><div class="label">Adyen Processing</div><div class="value">${fmt(totalAdyen)}</div></div>
+        </div>
+
+        <div class="stats-row">
+          <div class="stat-card" data-drill="${drillHealthy}"><div class="label">Healthy</div><div class="value green">${fmtN(healthy.length)}</div><div class="sub">Contacted &lt;7 days</div></div>
+          <div class="stat-card" data-drill="${drillMonitor}"><div class="label">Monitor</div><div class="value amber">${fmtN(monitor.length)}</div><div class="sub">7-21 days</div></div>
+          <div class="stat-card" data-drill="${drillAtRisk}"><div class="label">At Risk</div><div class="value red">${fmtN(atRiskH.length)}</div><div class="sub">21-45 days</div></div>
+          <div class="stat-card" data-drill="${drillNoContact}"><div class="label">No Contact</div><div class="value" style="color:var(--muted)">${fmtN(noContact.length)}</div><div class="sub">45+ days</div></div>
+        </div>
+
+        <div style="display:grid; grid-template-columns: 1fr 1fr; gap: 20px;">
+          <div class="card">
+            <div class="card-header"><h3>Status Breakdown</h3></div>
+            <div class="card-body" id="ac-status-donut"></div>
+          </div>
+          <div class="card">
+            <div class="card-header"><h3>Restaurant Type</h3></div>
+            <div class="card-body" id="ac-type-donut"></div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-header"><h3>ARR by Account Manager</h3></div>
+          <div class="card-body">
+            ${ownerSorted.map(([oid, d], i) => {
+              const did = regDrill((owners[oid] || oid) + ' — Customers', d.companies, companyDrillColumns(), companyDrillStats);
+              const pct = (d.arr / maxOwnerARR * 100).toFixed(0);
+              return `<div class="bar-row">
+                <div class="bar-label">${esc(oid === 'unassigned' ? 'Unassigned' : (owners[oid] || oid))} <span style="color:var(--muted);font-size:11px">(${d.count})</span></div>
+                <div class="bar-track"><div class="bar-fill" data-drill="${did}" style="width:${pct}%;background:${COLORS[i % COLORS.length]}"><span>${fmt(d.arr)}</span></div></div>
+              </div>`;
+            }).join('')}
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-header"><h3>All Active Customers (${fmtN(all.length)})</h3></div>
+          <div class="card-body" style="padding:0;overflow-x:auto;max-height:700px;overflow-y:auto">
+            <table>
+              <thead><tr><th>Company</th><th>Status</th><th>Deployed</th><th>ARR</th><th>MRR</th><th>Adyen ARR</th><th>Type</th><th>Cuisine</th><th>Health</th><th>Last Contact</th><th>Owner</th></tr></thead>
+              <tbody>
+                ${all.sort((a, b) => (parseFloat(b.properties.arr) || 0) - (parseFloat(a.properties.arr) || 0)).map(c => {
+                  const s = c.properties.subscription_status;
+                  const cfg = SUB_STATUS_CONFIG[s] || { label: s, color: '#999' };
+                  const days = daysSince(c.properties.notes_last_contacted);
+                  const deployed = c.properties.activation_date
+                    ? new Date(c.properties.activation_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+                    : c.properties.closedate
+                    ? new Date(c.properties.closedate).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+                    : '—';
+                  return `<tr>
+                    <td style="font-weight:700">${esc(c.properties.name || '—')}</td>
+                    <td><span class="badge" style="background:${cfg.color}22;color:${cfg.color}">${cfg.label}</span></td>
+                    <td>${deployed}</td>
+                    <td style="font-weight:700;color:var(--green)">${fmt(c.properties.arr)}</td>
+                    <td>${fmt(c.properties.mrr || c.properties.monthly_recurring_revenue_mrr)}</td>
+                    <td>${fmt(c.properties.adyen_processing_arr)}</td>
+                    <td>${esc(REST_TYPE_LABELS[c.properties.industrytype] || c.properties.industrytype || '—')}</td>
+                    <td>${esc(c.properties.cuisine_type || '—')}</td>
+                    <td>${healthBadge(days)}</td>
+                    <td>${days < 999 ? days + 'd ago' : 'Never'}</td>
+                    <td>${esc(owners[c.properties.hubspot_owner_id] || '—')}</td>
+                  </tr>`;
+                }).join('')}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      `;
+      $('ac-status-donut').innerHTML = buildDonut(statusDonut, true);
+      $('ac-type-donut').innerHTML = buildDonut(typeDonut, true);
+    } catch (e) {
+      $('content').innerHTML = `<div class="loading-state" style="color:var(--red)">Error: ${esc(e.message)}</div>`;
+    }
+  }
+
   // ── User Management ─────────────────────────────────────────
   async function usersApi(method = 'GET', queryUser = '', body = null) {
     const url = '/api/users' + (queryUser ? `?user=${encodeURIComponent(queryUser)}` : '');
@@ -3416,7 +3911,7 @@ const App = (() => {
     });
   });
 
-  return { login, disconnect, refresh, navigate, setDatePreset, setCustomDate, setLeadsFilterSource, setLeadsFilterRep, toggleLeadsFilter, clearLeadsFilter, addUser, changePassword, toggleAdmin, deleteUser };
+  return { login, disconnect, refresh, navigate, setDatePreset, setCustomDate, setLeadsFilterSource, setLeadsFilterRep, toggleLeadsFilter, clearLeadsFilter, toggleFilter, clearFilter, clearAllFilters, closeDrill, addUser, changePassword, toggleAdmin, deleteUser };
 })();
 </script>
 </body>
