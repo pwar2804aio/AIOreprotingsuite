@@ -202,9 +202,9 @@
   /* ─── Drill-Down Modal ─── */
   .drilldown-overlay {
     position: fixed; inset: 0; background: rgba(0,0,0,.45); z-index: 9999;
-    display: flex; justify-content: flex-end; opacity: 0; transition: opacity .2s;
+    display: flex; justify-content: flex-end; opacity: 0; pointer-events: none; transition: opacity .2s;
   }
-  .drilldown-overlay.active { opacity: 1; }
+  .drilldown-overlay.active { opacity: 1; pointer-events: auto; }
   .drilldown-panel {
     width: min(720px, 90vw); height: 100vh; background: var(--card);
     box-shadow: -4px 0 24px rgba(0,0,0,.15); display: flex; flex-direction: column;
