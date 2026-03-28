@@ -2466,9 +2466,10 @@ const App = (() => {
   // ── New Leads ───────────────────────────────────────────────
   let leadsFilterSources = []; // array for multi-select
   let leadsFilterReps = [];    // array for multi-select
+  let leadsFilterCompSources = []; // company_source multi-select
 
   function toggleLeadsFilter(type, val) {
-    const arr = type === 'source' ? leadsFilterSources : leadsFilterReps;
+    const arr = type === 'source' ? leadsFilterSources : type === 'rep' ? leadsFilterReps : leadsFilterCompSources;
     const idx = arr.indexOf(val);
     if (idx >= 0) arr.splice(idx, 1); else arr.push(val);
     cache = {}; render();
@@ -2476,7 +2477,8 @@ const App = (() => {
   function clearLeadsFilter(type) {
     if (type === 'source') leadsFilterSources = [];
     else if (type === 'rep') leadsFilterReps = [];
-    else { leadsFilterSources = []; leadsFilterReps = []; }
+    else if (type === 'compsource') leadsFilterCompSources = [];
+    else { leadsFilterSources = []; leadsFilterReps = []; leadsFilterCompSources = []; }
     cache = {}; render();
   }
   // Keep old functions working
@@ -2511,10 +2513,19 @@ const App = (() => {
       // Collect all unique sources and reps for dropdown (before filtering)
       const allSources = [...new Set(rawAll.map(c => getSource(c)))].sort();
       const allRepIds = [...new Set(rawAll.filter(c => c.properties.hubspot_owner_id).map(c => c.properties.hubspot_owner_id))];
+      const allCompSources = [...new Set(rawAll.map(c => c.properties.company_source || '').filter(Boolean))].sort();
+
+      // Company source counts (before filtering)
+      const compSourceCounts = {};
+      rawAll.forEach(c => {
+        const cs = c.properties.company_source || '';
+        if (cs) compSourceCounts[cs] = (compSourceCounts[cs] || 0) + 1;
+      });
 
       // Apply client-side filters (multi-select)
       let all = rawAll;
       if (leadsFilterSources.length > 0) all = all.filter(c => leadsFilterSources.includes(getSource(c)));
+      if (leadsFilterCompSources.length > 0) all = all.filter(c => leadsFilterCompSources.includes(c.properties.company_source || ''));
       if (leadsFilterReps.length > 0) {
         all = all.filter(c => {
           if (leadsFilterReps.includes('__unassigned__') && !c.properties.hubspot_owner_id) return true;
@@ -2646,6 +2657,7 @@ const App = (() => {
       // Active filter labels
       const activeFilters = [];
       if (leadsFilterSources.length > 0) activeFilters.push('Sources: ' + leadsFilterSources.join(', '));
+      if (leadsFilterCompSources.length > 0) activeFilters.push('Company Source: ' + leadsFilterCompSources.join(', '));
       if (leadsFilterReps.length > 0) activeFilters.push('Reps: ' + leadsFilterReps.map(r => r === '__unassigned__' ? 'Unassigned' : (owners[r] || r)).join(', '));
 
       $('content').innerHTML = `
@@ -2664,6 +2676,23 @@ const App = (() => {
                   <input type="checkbox" ${checked ? 'checked' : ''} onchange="App.toggleLeadsFilter('source','${esc(s)}')" style="accent-color:var(--blue);width:16px;height:16px">
                   <span>${esc(s)}</span>
                   <span style="margin-left:auto;font-size:11px;color:var(--muted)">${sourceCounts[s] || 0}</span>
+                </label>`;
+              }).join('')}
+            </div>
+          </div>
+          <div style="position:relative;display:inline-block" class="multi-dd">
+            <button onclick="this.parentElement.classList.toggle('open')" style="padding:7px 14px;border-radius:8px;border:1px solid var(--border);font-size:13px;background:var(--card);min-width:180px;text-align:left;display:flex;justify-content:space-between;align-items:center;cursor:pointer">
+              <span>${leadsFilterCompSources.length === 0 ? 'Company Source' : leadsFilterCompSources.length + ' source' + (leadsFilterCompSources.length > 1 ? 's' : '') + ' selected'}</span>
+              <span style="font-size:10px;margin-left:8px">&#x25BC;</span>
+            </button>
+            <div class="multi-dd-list" style="display:none;position:absolute;top:100%;left:0;min-width:240px;max-height:280px;overflow-y:auto;background:var(--card);border:1px solid var(--border);border-radius:8px;box-shadow:var(--shadow-md);z-index:100;margin-top:4px">
+              ${leadsFilterCompSources.length > 0 ? `<div style="padding:8px 12px;border-bottom:1px solid var(--border)"><button onclick="App.clearLeadsFilter('compsource')" style="font-size:12px;color:var(--red);background:none;font-weight:600;padding:0">Clear all</button></div>` : ''}
+              ${allCompSources.map(s => {
+                const checked = leadsFilterCompSources.includes(s);
+                return `<label style="display:flex;align-items:center;gap:8px;padding:8px 12px;cursor:pointer;font-size:13px;border-bottom:1px solid var(--border);${checked ? 'background:var(--purple)08;font-weight:600' : ''}" onmouseenter="this.style.background='var(--bg)'" onmouseleave="this.style.background='${checked ? 'var(--purple)08' : ''}'">
+                  <input type="checkbox" ${checked ? 'checked' : ''} onchange="App.toggleLeadsFilter('compsource','${esc(s)}')" style="accent-color:var(--purple);width:16px;height:16px">
+                  <span>${esc(s)}</span>
+                  <span style="margin-left:auto;font-size:11px;color:var(--muted)">${compSourceCounts[s] || 0}</span>
                 </label>`;
               }).join('')}
             </div>
