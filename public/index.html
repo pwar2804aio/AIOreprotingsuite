@@ -2503,6 +2503,16 @@ const App = (() => {
         [{ propertyName: 'createdate', direction: 'DESCENDING' }]
       );
 
+      // Fetch leads with company_source separately to get all values for the filter
+      const compSourceLeads = await getCachedSearch('newleads_compsource', 'companies',
+        ['name','company_source','hubspot_owner_id','createdate','notes_last_contacted',
+         'num_contacted_notes','industrytype','city','state','num_associated_deals',
+         'hs_object_source_label','hs_analytics_source'],
+        [{ propertyName: 'lifecyclestage', operator: 'EQ', value: 'lead' },
+         { propertyName: 'company_source', operator: 'HAS_PROPERTY' }, ...dateFilters],
+        [{ propertyName: 'createdate', direction: 'DESCENDING' }]
+      );
+
       const rawAll = leads.results;
       const total = leads.total || rawAll.length;
       const now = Date.now();
@@ -2510,22 +2520,33 @@ const App = (() => {
       // Helper to get source for a company
       function getSource(c) { return c.properties.hs_analytics_source || c.properties.hs_object_source_label || c.properties.company_source || 'Unknown'; }
 
-      // Collect all unique sources and reps for dropdown (before filtering)
-      const allSources = [...new Set(rawAll.map(c => getSource(c)))].sort();
-      const allRepIds = [...new Set(rawAll.filter(c => c.properties.hubspot_owner_id).map(c => c.properties.hubspot_owner_id))];
-      const allCompSources = [...new Set(rawAll.map(c => c.properties.company_source || '').filter(Boolean))].sort();
-
-      // Company source counts (before filtering)
+      // Company source counts from dedicated query (gets all 200+ with company_source)
       const compSourceCounts = {};
-      rawAll.forEach(c => {
+      compSourceLeads.results.forEach(c => {
         const cs = c.properties.company_source || '';
         if (cs) compSourceCounts[cs] = (compSourceCounts[cs] || 0) + 1;
       });
+      const allCompSources = Object.keys(compSourceCounts).sort();
+
+      // Collect all unique sources and reps for dropdown (before filtering)
+      const allSources = [...new Set(rawAll.map(c => getSource(c)))].sort();
+      const allRepIds = [...new Set(rawAll.filter(c => c.properties.hubspot_owner_id).map(c => c.properties.hubspot_owner_id))];
 
       // Apply client-side filters (multi-select)
-      let all = rawAll;
+      // When company source filter is active, merge results from the dedicated query
+      let all;
+      if (leadsFilterCompSources.length > 0) {
+        // Use company source results as base when filtering by company source
+        const compFiltered = compSourceLeads.results.filter(c => leadsFilterCompSources.includes(c.properties.company_source || ''));
+        // Merge with rawAll (deduplicate by id)
+        const ids = new Set(rawAll.map(c => c.id));
+        const merged = [...rawAll];
+        compFiltered.forEach(c => { if (!ids.has(c.id)) merged.push(c); });
+        all = merged.filter(c => leadsFilterCompSources.includes(c.properties.company_source || ''));
+      } else {
+        all = [...rawAll];
+      }
       if (leadsFilterSources.length > 0) all = all.filter(c => leadsFilterSources.includes(getSource(c)));
-      if (leadsFilterCompSources.length > 0) all = all.filter(c => leadsFilterCompSources.includes(c.properties.company_source || ''));
       if (leadsFilterReps.length > 0) {
         all = all.filter(c => {
           if (leadsFilterReps.includes('__unassigned__') && !c.properties.hubspot_owner_id) return true;
