@@ -332,7 +332,7 @@
     <div class="brand">
       <img src="aio-logo.png" alt="AIO" style="width:70px;margin-bottom:4px;filter:brightness(0) invert(1)">
       <h1>AIO Reports Centre</h1>
-      <small>v1.0.12</small>
+      <small>v1.0.13</small>
     </div>
     <nav>
       <div class="nav-label">Overview</div>
@@ -426,6 +426,7 @@ const App = (() => {
     { id: '2992070353', label: 'Onboarding', color: '#7c5cfc' },
     { id: '2986384063', label: 'Install/Training', color: '#9c27b0' },
     { id: '2986384064', label: 'Deployed', color: '#4caf50' },
+    { id: '3452539597', label: 'Deal Active', color: '#00c48c' },
     { id: '3060460231', label: 'Cancelled Before Live', color: '#e8481e' },
     { id: '3069369052', label: 'Churned', color: '#c62828' },
     { id: 'closedlost', label: 'Closed Lost', color: '#607d8b' },
@@ -670,7 +671,7 @@ const App = (() => {
       const drillOpenDeals = regDrill('Open Deals', openDeals, dealDrillColumns(), dealDrillStats);
       const drillWonDeals = regDrill('Closed Won Deals', wonDeals, dealDrillColumns(), dealDrillStats);
       const drillTickets = regDrill('Open Tickets', openTickets, [
-        { label: 'Subject', render: t => `<strong>${esc(t.properties.subject || '—')}</strong>` },
+        { label: 'Subject', render: t => `<strong>${hsTicket(t)}</strong>` },
         { label: 'Category', render: t => esc(t.properties.hs_ticket_category || '—') },
         { label: 'Priority', render: t => esc(t.properties.hs_ticket_priority || '—') },
         { label: 'Owner', render: t => esc(owners[t.properties.hubspot_owner_id] || '—') },
@@ -722,7 +723,7 @@ const App = (() => {
                   ${allDeals.slice(0, 8).map(d => {
                     const stage = STAGE_MAP[d.properties.dealstage];
                     return `<tr>
-                      <td style="font-weight:600">${esc(d.properties.dealname || '—')}</td>
+                      <td style="font-weight:600">${hsDeal(d)}</td>
                       <td><span class="badge" style="background:${stage?.color || '#999'}22; color:${stage?.color || '#999'}">${esc(stage?.label || d.properties.dealstage)}</span></td>
                       <td style="font-weight:600">${d.properties.amount ? fmt(d.properties.amount) : '—'}</td>
                     </tr>`;
@@ -803,11 +804,16 @@ const App = (() => {
   // ── Revenue Dashboard ─────────────────────────────────────────
   async function renderRevenue() {
     try {
+      _drillData = {};
       const deals = await getCachedSearch('deals_all', 'deals', ['dealstage','amount','hubspot_owner_id','dealname','closedate','hs_is_closed_won','hs_is_closed_lost','dealtype','createdate','hs_forecast_amount','hs_deal_stage_probability']);
       const allDeals = deals.results;
       const wonDeals = allDeals.filter(d => d.properties.hs_is_closed_won === 'true' || d.properties.dealstage === 'closedwon');
       const lostDeals = allDeals.filter(d => d.properties.hs_is_closed_lost === 'true' || d.properties.dealstage === 'closedlost');
       const openDeals = allDeals.filter(d => !['closedwon','closedlost','3060460231','3069369052'].includes(d.properties.dealstage));
+
+      const drillWon = regDrill('Closed Won Deals', wonDeals, dealDrillColumns(), dealDrillStats);
+      const drillLost = regDrill('Closed Lost Deals', lostDeals, dealDrillColumns(), dealDrillStats);
+      const drillOpen = regDrill('Open Pipeline Deals', openDeals, dealDrillColumns(), dealDrillStats);
 
       const totalWon = wonDeals.reduce((s, d) => s + (parseFloat(d.properties.amount) || 0), 0);
       const totalLost = lostDeals.reduce((s, d) => s + (parseFloat(d.properties.amount) || 0), 0);
@@ -848,11 +854,11 @@ const App = (() => {
 
       $('content').innerHTML = `
         <div class="stats-row">
-          <div class="stat-card"><div class="label">Closed Won Revenue</div><div class="value green">${fmt(totalWon)}</div><div class="sub">${fmtN(wonDeals.length)} deals</div></div>
+          <div class="stat-card" data-drill="${drillWon}" style="cursor:pointer"><div class="label">Closed Won Revenue</div><div class="value green">${fmt(totalWon)}</div><div class="sub">${fmtN(wonDeals.length)} deals</div></div>
           <div class="stat-card"><div class="label">Avg Deal Size</div><div class="value blue">${fmt(avgDealSize)}</div></div>
-          <div class="stat-card"><div class="label">Open Pipeline</div><div class="value">${fmt(totalPipeline)}</div><div class="sub">${fmtN(openDeals.length)} deals</div></div>
+          <div class="stat-card" data-drill="${drillOpen}" style="cursor:pointer"><div class="label">Open Pipeline</div><div class="value">${fmt(totalPipeline)}</div><div class="sub">${fmtN(openDeals.length)} deals</div></div>
           <div class="stat-card"><div class="label">Weighted Forecast</div><div class="value purple">${fmt(weightedPipeline)}</div><div class="sub">Probability-weighted</div></div>
-          <div class="stat-card"><div class="label">Lost Revenue</div><div class="value red">${fmt(totalLost)}</div><div class="sub">${fmtN(lostDeals.length)} deals</div></div>
+          <div class="stat-card" data-drill="${drillLost}" style="cursor:pointer"><div class="label">Lost Revenue</div><div class="value red">${fmt(totalLost)}</div><div class="sub">${fmtN(lostDeals.length)} deals</div></div>
         </div>
         <div style="display:grid; grid-template-columns: 1fr 1fr; gap: 20px;">
           <div class="card">
@@ -861,7 +867,9 @@ const App = (() => {
               <div class="bar-chart">
                 ${repSorted.filter(([id]) => id !== 'unassigned').map(([id, rev], i) => {
                   const pct = (rev / maxRev * 100).toFixed(0);
-                  return `<div class="bar-row">
+                  const repWon = wonDeals.filter(d => d.properties.hubspot_owner_id === id);
+                  const did = regDrill((owners[id] || id) + ' — Won Deals', repWon, dealDrillColumns(), dealDrillStats);
+                  return `<div class="bar-row" data-drill="${did}" style="cursor:pointer">
                     <div class="bar-label">${esc(owners[id] || 'ID: ' + id)}</div>
                     <div class="bar-track"><div class="bar-fill" style="width:${pct}%;background:${COLORS[i % COLORS.length]}"><span>${fmt(rev)}</span></div></div>
                   </div>`;
@@ -897,7 +905,7 @@ const App = (() => {
               <thead><tr><th>Deal</th><th>Amount</th><th>Type</th><th>Rep</th><th>Close Date</th></tr></thead>
               <tbody>
                 ${wonDeals.map(d => `<tr>
-                  <td style="font-weight:600">${esc(d.properties.dealname || '—')}</td>
+                  <td style="font-weight:600">${hsDeal(d)}</td>
                   <td style="font-weight:700;color:var(--green)">${d.properties.amount ? fmt(d.properties.amount) : '—'}</td>
                   <td>${esc(d.properties.dealtype === 'newbusiness' ? 'New' : d.properties.dealtype === 'existingbusiness' ? 'Existing' : '—')}</td>
                   <td>${esc(owners[d.properties.hubspot_owner_id] || '—')}</td>
@@ -1012,7 +1020,7 @@ const App = (() => {
                 ${allDeals.map(d => {
                   const stage = STAGE_MAP[d.properties.dealstage];
                   return `<tr>
-                    <td style="font-weight:600">${esc(d.properties.dealname || '—')}</td>
+                    <td style="font-weight:600">${hsDeal(d)}</td>
                     <td><span class="badge" style="background:${stage?.color || '#999'}22; color:${stage?.color || '#999'}">${esc(stage?.label || d.properties.dealstage)}</span></td>
                     <td style="font-weight:600">${d.properties.amount ? fmt(d.properties.amount) : '—'}</td>
                     <td>${esc(owners[d.properties.hubspot_owner_id] || '—')}</td>
@@ -1032,6 +1040,7 @@ const App = (() => {
   // ── Sales Velocity & Funnel ──────────────────────────────────
   async function renderVelocity() {
     try {
+      _drillData = {};
       const deals = await getCachedSearch('deals_all', 'deals', ['dealstage','amount','hubspot_owner_id','dealname','closedate','hs_is_closed_won','hs_is_closed_lost','dealtype','createdate','days_to_close']);
       const allDeals = deals.results;
       const wonDeals = allDeals.filter(d => d.properties.hs_is_closed_won === 'true' || d.properties.dealstage === 'closedwon');
@@ -1075,13 +1084,26 @@ const App = (() => {
       const totalOpenVal2 = openDeals.reduce((s, d) => s + (parseFloat(d.properties.amount) || 0), 0);
       const pipelineToClose = totalOpenVal2 > 0 && wonDeals.length > 0 ? (openDeals.length / wonDeals.length).toFixed(1) : '—';
 
+      const drillAllV = regDrill('All Deals', allDeals, dealDrillColumns(), dealDrillStats);
+      const drillWonV = regDrill('Deals Won', wonDeals, dealDrillColumns(), dealDrillStats);
+      const drillLostV = regDrill('Deals Lost', lostDeals, dealDrillColumns(), dealDrillStats);
+
+      // Aging bucket drill-downs
+      const now2 = new Date();
+      const agingDrills = {};
+      const agingRanges = { '0-7 days': [0,7], '8-14 days': [8,14], '15-30 days': [15,30], '31-60 days': [31,60], '60+ days': [61,9999] };
+      Object.entries(agingRanges).forEach(([label, [min, max]]) => {
+        const bucket = openDeals.filter(d => { const age = Math.floor((now2 - new Date(d.properties.createdate)) / 86400000); return age >= min && age <= max; });
+        agingDrills[label] = regDrill(label + ' Open Deals', bucket, dealDrillColumns(), dealDrillStats);
+      });
+
       $('content').innerHTML = `
         <div class="stats-row">
           <div class="stat-card"><div class="label">Avg Days to Close</div><div class="value blue">${avgDaysToClose}</div><div class="sub">Won deals only</div></div>
           <div class="stat-card"><div class="label">Win Rate</div><div class="value ${parseFloat(winRate) > 40 ? 'green' : 'amber'}">${winRate}%</div></div>
-          <div class="stat-card"><div class="label">Total Deals Created</div><div class="value">${fmtN(allDeals.length)}</div></div>
-          <div class="stat-card"><div class="label">Deals Won</div><div class="value green">${fmtN(wonDeals.length)}</div></div>
-          <div class="stat-card"><div class="label">Deals Lost</div><div class="value red">${fmtN(lostDeals.length)}</div></div>
+          <div class="stat-card" data-drill="${drillAllV}" style="cursor:pointer"><div class="label">Total Deals Created</div><div class="value">${fmtN(allDeals.length)}</div></div>
+          <div class="stat-card" data-drill="${drillWonV}" style="cursor:pointer"><div class="label">Deals Won</div><div class="value green">${fmtN(wonDeals.length)}</div></div>
+          <div class="stat-card" data-drill="${drillLostV}" style="cursor:pointer"><div class="label">Deals Lost</div><div class="value red">${fmtN(lostDeals.length)}</div></div>
         </div>
         <div style="display:grid; grid-template-columns: 1fr 1fr; gap: 20px;">
           <div class="card">
@@ -1090,7 +1112,7 @@ const App = (() => {
               <div class="bar-chart">
                 ${Object.entries(agingBuckets).map(([label, count]) => {
                   const pct = (count / maxAging * 100).toFixed(0);
-                  return `<div class="bar-row">
+                  return `<div class="bar-row" data-drill="${agingDrills[label]}" style="cursor:pointer">
                     <div class="bar-label">${label}</div>
                     <div class="bar-track"><div class="bar-fill" style="width:${pct}%;background:${agingColors[label]}"><span>${count}</span></div></div>
                   </div>`;
@@ -1110,7 +1132,9 @@ const App = (() => {
               ${funnelStages.map((s, i) => {
                 const count = stageCounts[s.id] || 0;
                 const pct = topCount > 0 ? (count / topCount * 100).toFixed(0) : 0;
-                return `<div class="funnel-stage">
+                const stageDeals = allDeals.filter(d => d.properties.dealstage === s.id);
+                const fDid = stageDeals.length > 0 ? regDrill(s.label + ' Deals', stageDeals, dealDrillColumns(), dealDrillStats) : '';
+                return `<div class="funnel-stage" ${fDid ? `data-drill="${fDid}" style="cursor:pointer"` : ''}>
                   <div class="funnel-name">${esc(s.label)}</div>
                   <div class="funnel-bar-wrap"><div class="funnel-bar" style="width:${pct}%; background:${s.color}"></div><div class="funnel-bar-label">${pct}%</div></div>
                   <div class="funnel-count">${count}</div>
@@ -1134,7 +1158,7 @@ const App = (() => {
                     const stage = STAGE_MAP[d.properties.dealstage];
                     const ageClass = d.age > 60 ? 'badge-red' : 'badge-amber';
                     return `<tr>
-                      <td style="font-weight:600">${esc(d.properties.dealname || '—')}</td>
+                      <td style="font-weight:600">${hsDeal(d)}</td>
                       <td><span class="badge" style="background:${stage?.color || '#999'}22; color:${stage?.color || '#999'}">${esc(stage?.label || '—')}</span></td>
                       <td>${d.properties.amount ? fmt(d.properties.amount) : '—'}</td>
                       <td>${esc(owners[d.properties.hubspot_owner_id] || '—')}</td>
@@ -1334,7 +1358,7 @@ const App = (() => {
                     const stage = STAGE_MAP[d.properties.dealstage];
                     const contactClass = d.daysSinceContact > 14 ? 'badge-red' : d.daysSinceContact > 7 ? 'badge-amber' : 'badge-green';
                     return `<tr>
-                      <td style="font-weight:600;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${esc(d.properties.dealname || '—')}</td>
+                      <td style="font-weight:600;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${hsDeal(d)}</td>
                       <td><span class="badge" style="background:${stage?.color || '#999'}22; color:${stage?.color || '#999'}">${esc(stage?.label || '—')}</span></td>
                       <td>${esc(owners[d.properties.hubspot_owner_id] || '—')}</td>
                       <td>${d.age}d</td>
@@ -1378,7 +1402,7 @@ const App = (() => {
                   ${noAmountDeals.slice(0, 20).map(d => {
                     const stage = STAGE_MAP[d.properties.dealstage];
                     return `<tr>
-                      <td style="font-weight:600">${esc(d.properties.dealname || '—')}</td>
+                      <td style="font-weight:600">${hsDeal(d)}</td>
                       <td><span class="badge" style="background:${stage?.color || '#999'}22; color:${stage?.color || '#999'}">${esc(stage?.label || '—')}</span></td>
                       <td>${esc(owners[d.properties.hubspot_owner_id] || '—')}</td>
                     </tr>`;
@@ -1822,7 +1846,7 @@ const App = (() => {
                 <thead><tr><th>Deal</th><th>Amount</th><th>Rep</th></tr></thead>
                 <tbody>
                   ${churnedDeals.concat(cancelledDeals).map(d => `<tr>
-                    <td style="font-weight:600">${esc(d.properties.dealname || '—')}</td>
+                    <td style="font-weight:600">${hsDeal(d)}</td>
                     <td>${d.properties.amount ? fmt(d.properties.amount) : '—'}</td>
                     <td>${esc(owners[d.properties.hubspot_owner_id] || '—')}</td>
                   </tr>`).join('') || '<tr><td colspan="3" style="text-align:center;color:var(--muted);padding:20px">No churned deals</td></tr>'}
@@ -2091,7 +2115,7 @@ const App = (() => {
                   ${open.slice(0, 20).map(t => {
                     const priClass = { HIGH: 'badge-red', URGENT: 'badge-red', MEDIUM: 'badge-amber', LOW: 'badge-green' }[t.properties.hs_ticket_priority] || 'badge-gray';
                     return `<tr>
-                      <td style="font-weight:600; max-width:250px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${esc(t.properties.subject || '—')}</td>
+                      <td style="font-weight:600; max-width:250px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${hsTicket(t)}</td>
                       <td><span class="badge ${priClass}">${esc(t.properties.hs_ticket_priority || '—')}</span></td>
                       <td>${esc(CAT_MAP[t.properties.hs_ticket_category] || t.properties.hs_ticket_category || '—')}</td>
                       <td>${esc(t.properties.source_type || '—')}</td>
@@ -2148,10 +2172,9 @@ const App = (() => {
                 <thead><tr><th>Name</th><th>Email</th><th>Title</th><th>Stage</th><th>Owner</th></tr></thead>
                 <tbody>
                   ${contacts.results.slice(0, 50).map(c => {
-                    const name = `${c.properties.firstname || ''} ${c.properties.lastname || ''}`.trim() || '—';
                     const lc = c.properties.lifecyclestage || '—';
                     return `<tr>
-                      <td style="font-weight:600">${esc(name)}</td>
+                      <td style="font-weight:600">${hsContact(c)}</td>
                       <td style="font-size:12px;color:var(--muted)">${esc(c.properties.email || '—')}</td>
                       <td>${esc(c.properties.jobtitle || '—')}</td>
                       <td><span class="badge badge-blue">${esc(lcLabels[lc] || lc)}</span></td>
@@ -2222,7 +2245,7 @@ const App = (() => {
               <thead><tr><th>Company</th><th>City</th><th>Industry</th><th>Contacts</th><th>Deals</th><th>Owner</th></tr></thead>
               <tbody>
                 ${companies.results.slice(0, 50).map(c => `<tr>
-                  <td style="font-weight:600">${esc(c.properties.name || '—')}</td>
+                  <td style="font-weight:600">${hsCompany(c)}</td>
                   <td>${esc(c.properties.city || '—')}</td>
                   <td>${esc(c.properties.industry || '—')}</td>
                   <td>${c.properties.num_associated_contacts || '0'}</td>
@@ -2271,6 +2294,18 @@ const App = (() => {
   }
 
   function esc(s) { const el = document.createElement('span'); el.textContent = s; return el.innerHTML; }
+
+  // ── HubSpot Record Links ──────────────────────────────────
+  const HS_PORTAL = '244508708';
+  function hsLink(type, id, label) {
+    if (!id || !label) return esc(label || '—');
+    const url = `https://app.hubspot.com/contacts/${HS_PORTAL}/${type}/${id}`;
+    return `<a href="${url}" target="_blank" rel="noopener" style="color:inherit;text-decoration:underline;text-decoration-style:dotted;text-underline-offset:2px" title="Open in HubSpot">${esc(label)}</a>`;
+  }
+  function hsDeal(d) { return hsLink('deal', d.id, d.properties.dealname || '—'); }
+  function hsCompany(c) { return hsLink('company', c.id, c.properties.name || '—'); }
+  function hsContact(c) { return hsLink('contact', c.id, `${c.properties.firstname || ''} ${c.properties.lastname || ''}`.trim() || '—'); }
+  function hsTicket(t) { return hsLink('ticket', t.id, t.properties.subject || '—'); }
 
   // ── Drill-Down System ──────────────────────────────────────
   let _drillData = {}; // stores drill-down data by ID
@@ -2417,7 +2452,7 @@ const App = (() => {
   // Helper to make a drill-down for a list of companies
   function companyDrillColumns() {
     return [
-      { label: 'Company', render: c => `<strong>${esc(c.properties.name || '—')}</strong>` },
+      { label: 'Company', render: c => `<strong>${hsCompany(c)}</strong>` },
       { label: 'ARR', render: c => `<span style="font-weight:700">${fmt(c.properties.arr)}</span>` },
       { label: 'MRR', render: c => fmt(c.properties.mrr || c.properties.monthly_recurring_revenue_mrr) },
       { label: 'Type', render: c => esc(REST_TYPE_LABELS[c.properties.industrytype] || c.properties.industrytype || '—') },
@@ -2435,9 +2470,9 @@ const App = (() => {
   // Helper to make a drill-down for a list of deals
   function dealDrillColumns() {
     return [
-      { label: 'Deal', render: d => `<strong>${esc(d.properties.dealname || '—')}</strong>` },
+      { label: 'Deal', render: d => `<strong>${hsDeal(d)}</strong>` },
       { label: 'Amount', render: d => `<span style="font-weight:700">${fmt(d.properties.amount)}</span>` },
-      { label: 'Stage', render: d => esc(d.properties.dealstage || '—') },
+      { label: 'Stage', render: d => { const s = STAGE_MAP[d.properties.dealstage]; return s ? `<span class="badge" style="background:${s.color}22;color:${s.color}">${esc(s.label)}</span>` : esc(d.properties.dealstage || '—'); } },
       { label: 'Owner', render: d => esc(owners[d.properties.hubspot_owner_id] || '—') },
       { label: 'Close Date', render: d => d.properties.closedate ? new Date(d.properties.closedate).toLocaleDateString() : '—' },
     ];
@@ -2515,7 +2550,7 @@ const App = (() => {
               <thead><tr><th>Deal</th><th>Rep</th><th>Amount</th><th>Close Date</th><th>Type</th></tr></thead>
               <tbody>
                 ${wonDeals.sort((a, b) => (b.properties.amount || 0) - (a.properties.amount || 0)).slice(0, 50).map(d => `<tr>
-                  <td style="font-weight:600">${esc(d.properties.dealname || '—')}</td>
+                  <td style="font-weight:600">${hsDeal(d)}</td>
                   <td>${esc(owners[d.properties.hubspot_owner_id] || '—')}</td>
                   <td style="font-weight:700;color:var(--green)">${fmt(d.properties.amount)}</td>
                   <td>${d.properties.closedate ? new Date(d.properties.closedate).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '—'}</td>
@@ -2801,7 +2836,7 @@ const App = (() => {
                   const isDeployed = stage === '2986384064';
                   const stageCls = isActive ? 'badge-green' : isDeployed ? 'badge-blue' : '';
                   return `<tr>
-                    <td style="font-weight:700">${esc(d.properties.dealname || '—')}</td>
+                    <td style="font-weight:700">${hsDeal(d)}</td>
                     <td>${esc(owners[d.properties.hubspot_owner_id] || '—')}</td>
                     <td>${fmtDate(d.properties.hs_v2_date_entered_closedwon || d.properties.closedate)}</td>
                     <td>${fmtDate(d.properties.hs_v2_date_entered_2992070353)}</td>
@@ -3428,7 +3463,7 @@ const App = (() => {
                 ${unassigned.map(c => {
                   const days = daysSince(c.properties.createdate);
                   return `<tr>
-                    <td style="font-weight:700">${esc(c.properties.name || '—')}</td>
+                    <td style="font-weight:700">${hsCompany(c)}</td>
                     <td>${new Date(c.properties.createdate).toLocaleDateString('en-US',{month:'short',day:'numeric'})}</td>
                     <td>${ageBadge(days)}</td>
                     <td>${esc(getSource(c))}</td>
@@ -3450,7 +3485,7 @@ const App = (() => {
                 ${notContacted.sort((a,b) => new Date(a.properties.createdate) - new Date(b.properties.createdate)).map(c => {
                   const days = daysSince(c.properties.createdate);
                   return `<tr>
-                    <td style="font-weight:700">${esc(c.properties.name || '—')}</td>
+                    <td style="font-weight:700">${hsCompany(c)}</td>
                     <td>${new Date(c.properties.createdate).toLocaleDateString('en-US',{month:'short',day:'numeric'})}</td>
                     <td>${ageBadge(days)}</td>
                     <td>${c.properties.hubspot_owner_id ? esc(owners[c.properties.hubspot_owner_id] || '—') : '<span style="color:var(--red);font-weight:600">Unassigned</span>'}</td>
@@ -3472,7 +3507,7 @@ const App = (() => {
                 ${all.map(c => {
                   const days = daysSince(c.properties.createdate);
                   return `<tr>
-                    <td style="font-weight:700">${esc(c.properties.name || '—')}</td>
+                    <td style="font-weight:700">${hsCompany(c)}</td>
                     <td style="white-space:nowrap">${new Date(c.properties.createdate).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'})}</td>
                     <td>${ageBadge(days)}</td>
                     <td>${actionBadge(c)}</td>
@@ -3703,7 +3738,7 @@ const App = (() => {
                   const cfg = SUB_STATUS_CONFIG[s] || { label: s, color: '#999' };
                   const days = daysSince(c.properties.notes_last_contacted);
                   return `<tr>
-                    <td style="font-weight:700">${esc(c.properties.name || '—')}</td>
+                    <td style="font-weight:700">${hsCompany(c)}</td>
                     <td><span class="badge" style="background:${cfg.color}22;color:${cfg.color}">${cfg.label}</span></td>
                     <td style="font-weight:600">${fmt(c.properties.arr)}</td>
                     <td>${fmt(c.properties.mrr || c.properties.monthly_recurring_revenue_mrr)}</td>
@@ -3726,7 +3761,7 @@ const App = (() => {
                 ${silent.slice(0, 20).map(c => {
                   const days = daysSince(c.properties.notes_last_contacted);
                   return `<tr>
-                    <td style="font-weight:700">${esc(c.properties.name || '—')}</td>
+                    <td style="font-weight:700">${hsCompany(c)}</td>
                     <td style="font-weight:600">${fmt(c.properties.arr)}</td>
                     <td style="font-weight:700;color:${days > 45 ? 'var(--red)' : 'var(--amber)'}">${days < 999 ? days + ' days' : 'Never'}</td>
                     <td>${healthBadge(days)}</td>
@@ -3746,7 +3781,7 @@ const App = (() => {
               <thead><tr><th>Company</th><th>Activated</th><th>Last Contact</th><th>Owner</th></tr></thead>
               <tbody>
                 ${zeroARR.map(c => `<tr>
-                  <td style="font-weight:700">${esc(c.properties.name || '—')}</td>
+                  <td style="font-weight:700">${hsCompany(c)}</td>
                   <td>${c.properties.activation_date ? new Date(c.properties.activation_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '—'}</td>
                   <td>${daysSince(c.properties.notes_last_contacted) < 999 ? daysSince(c.properties.notes_last_contacted) + 'd ago' : 'Never'}</td>
                   <td>${esc(owners[c.properties.hubspot_owner_id] || '—')}</td>
@@ -3766,7 +3801,7 @@ const App = (() => {
                   const s = c.properties.subscription_status;
                   const cfg = SUB_STATUS_CONFIG[s] || { label: s, color: '#999' };
                   return `<tr>
-                    <td style="font-weight:700">${esc(c.properties.name || '—')}</td>
+                    <td style="font-weight:700">${hsCompany(c)}</td>
                     <td><span class="badge" style="background:${cfg.color}22;color:${cfg.color}">${cfg.label}</span></td>
                     <td style="color:var(--muted)">${fmt(c.properties.arr)}</td>
                     <td>${esc(REST_TYPE_LABELS[c.properties.industrytype] || c.properties.industrytype || '—')}</td>
@@ -3788,7 +3823,7 @@ const App = (() => {
                 ${active.sort((a, b) => (parseFloat(b.properties.arr) || 0) - (parseFloat(a.properties.arr) || 0)).map(c => {
                   const days = daysSince(c.properties.notes_last_contacted);
                   return `<tr>
-                    <td style="font-weight:700">${esc(c.properties.name || '—')}</td>
+                    <td style="font-weight:700">${hsCompany(c)}</td>
                     <td style="font-weight:700;color:var(--green)">${fmt(c.properties.arr)}</td>
                     <td>${fmt(c.properties.mrr || c.properties.monthly_recurring_revenue_mrr)}</td>
                     <td>${fmt(c.properties.adyen_processing_arr)}</td>
@@ -3988,7 +4023,7 @@ const App = (() => {
                     ? new Date(c.properties.closedate).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
                     : '—';
                   return `<tr>
-                    <td style="font-weight:700">${esc(c.properties.name || '—')}</td>
+                    <td style="font-weight:700">${hsCompany(c)}</td>
                     <td><span class="badge" style="background:${cfg.color}22;color:${cfg.color}">${cfg.label}</span></td>
                     <td>${deployed}</td>
                     <td style="font-weight:700;color:var(--green)">${fmt(c.properties.arr)}</td>
