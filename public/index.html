@@ -2255,11 +2255,16 @@ const App = (() => {
     calls: 'hs_createdate',
   };
 
-  async function getCachedSearch(key, objectType, props, filters = [], sorts = []) {
+  async function getCachedSearch(key, objectType, props, filters = [], sorts = [], skipAutoDate = false) {
     const cacheKey = `${key}_${dateFrom}_${dateTo}`;
     if (cache[cacheKey]) return cache[cacheKey];
-    const dateProp = DATE_PROP_MAP[objectType] || 'createdate';
-    const allFilters = [...filters, ...getDateFilters(dateProp)];
+    let allFilters;
+    if (skipAutoDate) {
+      allFilters = filters;
+    } else {
+      const dateProp = DATE_PROP_MAP[objectType] || 'createdate';
+      allFilters = [...filters, ...getDateFilters(dateProp)];
+    }
     const res = await searchAllCRM(objectType, props, allFilters, sorts);
     cache[cacheKey] = res;
     return res;
@@ -2630,13 +2635,15 @@ const App = (() => {
           ['name','arr','mrr','hubspot_owner_id','hs_v2_date_entered_customer','hs_v2_date_entered_3318740675',
            'hs_v2_date_entered_3320851165','activation_date','subscription_status','lifecyclestage','closedate','industrytype'],
           [{ propertyName: 'hs_v2_date_entered_3318740675', operator: 'HAS_PROPERTY' }, ...deployDateFilters],
-          [{ propertyName: 'hs_v2_date_entered_3318740675', direction: 'DESCENDING' }]
+          [{ propertyName: 'hs_v2_date_entered_3318740675', direction: 'DESCENDING' }],
+          true
         ),
         getCachedSearch('commpayout_activated', 'companies',
           ['name','arr','mrr','hubspot_owner_id','hs_v2_date_entered_customer','hs_v2_date_entered_3318740675',
            'hs_v2_date_entered_3320851165','activation_date','subscription_status','lifecyclestage','closedate','industrytype'],
           [{ propertyName: 'hs_v2_date_entered_3320851165', operator: 'HAS_PROPERTY' }, ...activeDateFilters],
-          [{ propertyName: 'hs_v2_date_entered_3320851165', direction: 'DESCENDING' }]
+          [{ propertyName: 'hs_v2_date_entered_3320851165', direction: 'DESCENDING' }],
+          true
         ),
       ]);
 
