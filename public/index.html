@@ -332,7 +332,7 @@
     <div class="brand">
       <img src="aio-logo.png" alt="AIO" style="width:70px;margin-bottom:4px;filter:brightness(0) invert(1)">
       <h1>AIO Reports Centre</h1>
-      <small>v1.0.13</small>
+      <small>v1.0.14</small>
     </div>
     <nav>
       <div class="nav-label">Overview</div>
@@ -349,6 +349,7 @@
       <a href="#" data-view="cleanroom"><i class="icon">&#x1f9f9;</i><span>Clean Your Room</span></a>
       <a href="#" data-view="subscriptions"><i class="icon">&#x1f4cb;</i><span>Subscriptions</span></a>
       <a href="#" data-view="activecustomers"><i class="icon">&#x2705;</i><span>Active Customers</span></a>
+      <a href="#" data-view="deployments"><i class="icon">&#x1f4e6;</i><span>Deployments Booked</span></a>
       <div class="nav-label">Targets</div>
       <a href="#" data-view="quota"><i class="icon">&#x1f4c8;</i><span>Quota Tracker</span></a>
       <a href="#" data-view="commission"><i class="icon">&#x1f4b5;</i><span>Commission</span></a>
@@ -589,7 +590,7 @@ const App = (() => {
   function render() {
     const c = $('content');
     c.innerHTML = '<div class="loading-state"><div class="spinner"></div> Loading data...</div>';
-    const renderers = { dashboard: renderDashboard, revenue: renderRevenue, pipeline: renderPipeline, velocity: renderVelocity, reps: renderReps, scorecard: renderScorecard, repactivity: renderRepActivity, leaderboard: renderLeaderboard, cleanroom: renderCleanRoom, health: renderHealth, geo: renderGeo, leadsource: renderLeadSource, tickets: renderTickets, contacts: renderContacts, companies: renderCompanies, newleads: renderNewLeads, quota: renderQuota, commission: renderCommission, commpayout: renderCommPayout, activitygoals: renderActivityGoals, subscriptions: renderSubscriptions, activecustomers: renderActiveCustomers, users: renderUsers };
+    const renderers = { dashboard: renderDashboard, revenue: renderRevenue, pipeline: renderPipeline, velocity: renderVelocity, reps: renderReps, scorecard: renderScorecard, repactivity: renderRepActivity, leaderboard: renderLeaderboard, cleanroom: renderCleanRoom, health: renderHealth, geo: renderGeo, leadsource: renderLeadSource, tickets: renderTickets, contacts: renderContacts, companies: renderCompanies, newleads: renderNewLeads, quota: renderQuota, commission: renderCommission, commpayout: renderCommPayout, activitygoals: renderActivityGoals, subscriptions: renderSubscriptions, activecustomers: renderActiveCustomers, deployments: renderDeployments, users: renderUsers };
     (renderers[currentView] || renderDashboard)();
   }
 
@@ -3032,6 +3033,147 @@ const App = (() => {
   // Keep old functions working
   function setLeadsFilterSource(val) { leadsFilterSources = val ? [val] : []; cache = {}; render(); }
   function setLeadsFilterRep(val) { leadsFilterReps = val ? [val] : []; cache = {}; render(); }
+
+  // ── Deployments Booked ──────────────────────────────────────
+  async function renderDeployments() {
+    try {
+      _drillData = {};
+      const meetings = await getCachedSearch('deployments_booked', 'meetings',
+        ['hs_meeting_title','hs_activity_type','hs_meeting_outcome','hs_meeting_start_time','hs_meeting_end_time','hubspot_owner_id','hs_createdate','hs_created_by'],
+        [{ propertyName: 'hs_activity_type', operator: 'EQ', value: 'Deployment/Call Out' }],
+        [{ propertyName: 'hs_meeting_start_time', direction: 'DESCENDING' }]
+      );
+
+      const all = meetings.results;
+      const fmtDate = (d) => d ? new Date(d).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '—';
+      const fmtTime = (d) => d ? new Date(d).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }) : '';
+
+      // Group by outcome
+      const scheduled = all.filter(m => m.properties.hs_meeting_outcome === 'SCHEDULED');
+      const completed = all.filter(m => m.properties.hs_meeting_outcome === 'COMPLETED');
+      const noShow = all.filter(m => m.properties.hs_meeting_outcome === 'NO_SHOW');
+      const canceled = all.filter(m => m.properties.hs_meeting_outcome === 'CANCELED');
+
+      // Upcoming (scheduled in the future)
+      const now = new Date();
+      const upcoming = scheduled.filter(m => new Date(m.properties.hs_meeting_start_time) >= now).sort((a, b) => new Date(a.properties.hs_meeting_start_time) - new Date(b.properties.hs_meeting_start_time));
+      const past = all.filter(m => new Date(m.properties.hs_meeting_start_time) < now);
+
+      // By assigned rep
+      const repCounts = {};
+      all.forEach(m => {
+        const oid = m.properties.hubspot_owner_id || 'unassigned';
+        repCounts[oid] = (repCounts[oid] || 0) + 1;
+      });
+      const repSorted = Object.entries(repCounts).sort((a, b) => b[1] - a[1]);
+      const maxRep = repSorted[0]?.[1] || 1;
+
+      // Filters
+      const repIds = [...new Set(all.filter(m => m.properties.hubspot_owner_id).map(m => m.properties.hubspot_owner_id))];
+      const outcomes = [...new Set(all.map(m => m.properties.hs_meeting_outcome).filter(Boolean))];
+      const outcomeLabels = { SCHEDULED: 'Scheduled', COMPLETED: 'Completed', NO_SHOW: 'No Show', CANCELED: 'Canceled', RESCHEDULED: 'Rescheduled' };
+
+      const filterDefs = [
+        { key: 'rep', label: 'Assigned To', getter: m => m.properties.hubspot_owner_id || 'unassigned',
+          options: [...repIds.map(id => ({ value: id, label: owners[id] || 'ID: ' + id })), { value: 'unassigned', label: 'Unassigned' }] },
+        { key: 'outcome', label: 'Status', getter: m => m.properties.hs_meeting_outcome || '',
+          options: outcomes.map(o => ({ value: o, label: outcomeLabels[o] || o })) },
+      ];
+      filterDefs.forEach(f => { const counts = {}; all.forEach(m => { const v = f.getter(m); counts[v] = (counts[v] || 0) + 1; }); f.options.forEach(o => { o.count = counts[o.value] || 0; }); });
+
+      const filtered = applyFilters('deployments', all, filterDefs);
+
+      // Re-split after filtering
+      const filteredUpcoming = filtered.filter(m => m.properties.hs_meeting_outcome === 'SCHEDULED' && new Date(m.properties.hs_meeting_start_time) >= now).sort((a, b) => new Date(a.properties.hs_meeting_start_time) - new Date(b.properties.hs_meeting_start_time));
+      const filteredPast = filtered.filter(m => new Date(m.properties.hs_meeting_start_time) < now).sort((a, b) => new Date(b.properties.hs_meeting_start_time) - new Date(a.properties.hs_meeting_start_time));
+
+      const outcomeColors = { SCHEDULED: '#4c6ef5', COMPLETED: '#00c48c', NO_SHOW: '#e8481e', CANCELED: '#607d8b', RESCHEDULED: '#f5a623' };
+
+      $('content').innerHTML = `
+        ${buildFilterBar('deployments', filterDefs)}
+        <div class="stats-row">
+          <div class="stat-card"><div class="label">Total Deployments</div><div class="value">${fmtN(filtered.length)}</div></div>
+          <div class="stat-card"><div class="label">Upcoming</div><div class="value blue">${fmtN(filteredUpcoming.length)}</div></div>
+          <div class="stat-card"><div class="label">Completed</div><div class="value green">${fmtN(filtered.filter(m => m.properties.hs_meeting_outcome === 'COMPLETED').length)}</div></div>
+          <div class="stat-card"><div class="label">Canceled / No Show</div><div class="value red">${fmtN(filtered.filter(m => ['CANCELED','NO_SHOW'].includes(m.properties.hs_meeting_outcome)).length)}</div></div>
+        </div>
+
+        ${filteredUpcoming.length > 0 ? `<div class="card">
+          <div class="card-header"><h3>&#x1f4c5; Upcoming Deployments (${filteredUpcoming.length})</h3></div>
+          <div class="card-body" style="padding:0;overflow-x:auto">
+            <table>
+              <thead><tr><th>Deployment</th><th>Date</th><th>Time</th><th>Assigned To</th><th>Created By</th><th>Status</th></tr></thead>
+              <tbody>
+                ${filteredUpcoming.map(m => {
+                  const oClass = { SCHEDULED: 'badge-blue', COMPLETED: 'badge-green', NO_SHOW: 'badge-red', CANCELED: 'badge-gray', RESCHEDULED: 'badge-amber' }[m.properties.hs_meeting_outcome] || 'badge-gray';
+                  return `<tr>
+                    <td style="font-weight:700">${esc(m.properties.hs_meeting_title || '—')}</td>
+                    <td>${fmtDate(m.properties.hs_meeting_start_time)}</td>
+                    <td>${fmtTime(m.properties.hs_meeting_start_time)}${m.properties.hs_meeting_end_time ? ' – ' + fmtTime(m.properties.hs_meeting_end_time) : ''}</td>
+                    <td>${esc(owners[m.properties.hubspot_owner_id] || '—')}</td>
+                    <td>${esc(owners[m.properties.hs_created_by] || '—')}</td>
+                    <td><span class="badge ${oClass}">${esc(outcomeLabels[m.properties.hs_meeting_outcome] || m.properties.hs_meeting_outcome || '—')}</span></td>
+                  </tr>`;
+                }).join('')}
+              </tbody>
+            </table>
+          </div>
+        </div>` : ''}
+
+        <div style="display:grid; grid-template-columns: 1fr 1fr; gap: 20px;">
+          <div class="card">
+            <div class="card-header"><h3>Deployments by Rep</h3></div>
+            <div class="card-body">
+              <div class="bar-chart">
+                ${repSorted.filter(([id]) => id !== 'unassigned' && owners[id]).map(([id, count], i) => {
+                  const pct = (count / maxRep * 100).toFixed(0);
+                  return `<div class="bar-row">
+                    <div class="bar-label">${esc(owners[id] || id)}</div>
+                    <div class="bar-track"><div class="bar-fill" style="width:${pct}%;background:${COLORS[i % COLORS.length]}"><span>${count}</span></div></div>
+                  </div>`;
+                }).join('')}
+              </div>
+            </div>
+          </div>
+          <div class="card">
+            <div class="card-header"><h3>Status Breakdown</h3></div>
+            <div class="card-body" id="deploy-outcome-donut"></div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-header"><h3>All Deployments (${filtered.length})</h3></div>
+          <div class="card-body" style="padding:0;overflow-x:auto;max-height:600px;overflow-y:auto">
+            <table>
+              <thead><tr><th>Deployment</th><th>Date</th><th>Time</th><th>Assigned To</th><th>Created By</th><th>Created Date</th><th>Status</th></tr></thead>
+              <tbody>
+                ${filtered.sort((a, b) => new Date(b.properties.hs_meeting_start_time) - new Date(a.properties.hs_meeting_start_time)).map(m => {
+                  const oClass = { SCHEDULED: 'badge-blue', COMPLETED: 'badge-green', NO_SHOW: 'badge-red', CANCELED: 'badge-gray', RESCHEDULED: 'badge-amber' }[m.properties.hs_meeting_outcome] || 'badge-gray';
+                  return `<tr>
+                    <td style="font-weight:700">${esc(m.properties.hs_meeting_title || '—')}</td>
+                    <td>${fmtDate(m.properties.hs_meeting_start_time)}</td>
+                    <td>${fmtTime(m.properties.hs_meeting_start_time)}${m.properties.hs_meeting_end_time ? ' – ' + fmtTime(m.properties.hs_meeting_end_time) : ''}</td>
+                    <td>${esc(owners[m.properties.hubspot_owner_id] || '—')}</td>
+                    <td>${esc(owners[m.properties.hs_created_by] || '—')}</td>
+                    <td style="color:var(--muted);font-size:12px">${fmtDate(m.properties.hs_createdate)}</td>
+                    <td><span class="badge ${oClass}">${esc(outcomeLabels[m.properties.hs_meeting_outcome] || m.properties.hs_meeting_outcome || '—')}</span></td>
+                  </tr>`;
+                }).join('')}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      `;
+      // Status donut
+      const outcomeCounts = {};
+      filtered.forEach(m => { const o = m.properties.hs_meeting_outcome || 'Unknown'; outcomeCounts[o] = (outcomeCounts[o] || 0) + 1; });
+      $('deploy-outcome-donut').innerHTML = buildDonut(
+        Object.entries(outcomeCounts).filter(([,v]) => v > 0).map(([k, v]) => ({ label: outcomeLabels[k] || k, value: v, color: outcomeColors[k] || '#999' }))
+      );
+    } catch (e) {
+      $('content').innerHTML = `<div class="loading-state" style="color:var(--red)">Error: ${esc(e.message)}</div>`;
+    }
+  }
 
   async function renderNewLeads() {
     try {
