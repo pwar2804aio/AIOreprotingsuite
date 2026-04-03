@@ -332,7 +332,7 @@
     <div class="brand">
       <img src="aio-logo.png" alt="AIO" style="width:70px;margin-bottom:4px;filter:brightness(0) invert(1)">
       <h1>AIO Reports Centre</h1>
-      <small>v1.0.9</small>
+      <small>v1.0.10</small>
     </div>
     <nav>
       <div class="nav-label">Overview</div>
@@ -2648,7 +2648,8 @@ const App = (() => {
         true
       );
 
-      const all = deals.results;
+      // Exclude cancelled/closed-lost deals (stage 3069369052)
+      const all = deals.results.filter(d => d.properties.dealstage !== '3069369052');
       const fmtDate = (d) => d ? new Date(d).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '—';
       const daysBetween = (a, b) => (a && b) ? Math.round((new Date(b) - new Date(a)) / 86400000) : null;
 
