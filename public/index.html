@@ -332,7 +332,7 @@
     <div class="brand">
       <img src="aio-logo.png" alt="AIO" style="width:70px;margin-bottom:4px;filter:brightness(0) invert(1)">
       <h1>AIO Reports Centre</h1>
-      <small>v1.0.7</small>
+      <small>v1.0.8</small>
     </div>
     <nav>
       <div class="nav-label">Overview</div>
@@ -2621,103 +2621,110 @@ const App = (() => {
   }
 
   // ── Commission Payouts ──────────────────────────────────────────
-  // Commission is earned when a company is DEPLOYED and BILLING — filter by date entered Deployed/Active stage
+  // Uses DEAL pipeline stages: Closed Won → Onboarding → Install/Training → Deployed → Deal Active
+  const DEAL_STAGES = {
+    closedwon: { label: 'Closed Won', dateProp: 'hs_v2_date_entered_closedwon' },
+    '2992070353': { label: 'Onboarding', dateProp: 'hs_v2_date_entered_2992070353' },
+    '2986384063': { label: 'Install/Training', dateProp: 'hs_v2_date_entered_2986384063' },
+    '2986384064': { label: 'Deployed', dateProp: 'hs_v2_date_entered_2986384064' },
+    '3452539597': { label: 'Deal Active', dateProp: 'hs_v2_date_entered_3452539597' },
+  };
+  // "Closed Won" for this report = any deal that reached closedwon, onboarding, install, deployed, or active
+  const CLOSED_WON_STAGES = ['closedwon', '2992070353', '2986384063', '2986384064', '3452539597', '3060460231'];
+
   async function renderCommPayout() {
     try {
-      // Use deployed date (3318740675) or active date (3320851165) for date filtering
-      // Fetch companies that entered Deployed stage in the selected period
-      const deployDateFilters = getDateFilters('hs_v2_date_entered_3318740675');
-      const activeDateFilters = getDateFilters('hs_v2_date_entered_3320851165');
+      // Date filter on the Closed Won date (when deal entered closedwon)
+      const dateFilters = getDateFilters('hs_v2_date_entered_closedwon');
 
-      // Two queries: companies deployed in period OR companies activated in period
-      const [deployedRes, activatedRes] = await Promise.all([
-        getCachedSearch('commpayout_deployed', 'companies',
-          ['name','arr','mrr','hubspot_owner_id','hs_v2_date_entered_customer','hs_v2_date_entered_3318740675',
-           'hs_v2_date_entered_3320851165','activation_date','subscription_status','lifecyclestage','closedate','industrytype'],
-          [{ propertyName: 'hs_v2_date_entered_3318740675', operator: 'HAS_PROPERTY' }, ...deployDateFilters],
-          [{ propertyName: 'hs_v2_date_entered_3318740675', direction: 'DESCENDING' }],
-          true
-        ),
-        getCachedSearch('commpayout_activated', 'companies',
-          ['name','arr','mrr','hubspot_owner_id','hs_v2_date_entered_customer','hs_v2_date_entered_3318740675',
-           'hs_v2_date_entered_3320851165','activation_date','subscription_status','lifecyclestage','closedate','industrytype'],
-          [{ propertyName: 'hs_v2_date_entered_3320851165', operator: 'HAS_PROPERTY' }, ...activeDateFilters],
-          [{ propertyName: 'hs_v2_date_entered_3320851165', direction: 'DESCENDING' }],
-          true
-        ),
-      ]);
+      const deals = await getCachedSearch('commpayout_deals_v2', 'deals',
+        ['dealname','amount','closedate','hubspot_owner_id','dealstage','hs_is_closed_won',
+         'hs_arr','hs_mrr','pipeline',
+         'hs_v2_date_entered_closedwon','hs_v2_date_entered_2992070353',
+         'hs_v2_date_entered_2986384063','hs_v2_date_entered_2986384064',
+         'hs_v2_date_entered_3452539597','hs_v2_date_entered_current_stage'],
+        [{ propertyName: 'hs_v2_date_entered_closedwon', operator: 'HAS_PROPERTY' }, ...dateFilters],
+        [{ propertyName: 'hs_v2_date_entered_closedwon', direction: 'DESCENDING' }],
+        true
+      );
 
-      // Merge and deduplicate by company id
-      const seen = new Set();
-      const all = [];
-      [...deployedRes.results, ...activatedRes.results].forEach(c => {
-        if (!seen.has(c.id)) { seen.add(c.id); all.push(c); }
-      });
-
+      const all = deals.results;
       const fmtDate = (d) => d ? new Date(d).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '—';
       const daysBetween = (a, b) => (a && b) ? Math.round((new Date(b) - new Date(a)) / 86400000) : null;
 
+      // Current stage label
+      function stageLabel(id) { return DEAL_STAGES[id]?.label || id || '—'; }
+
       // Filters
-      const repIds = [...new Set(all.filter(c => c.properties.hubspot_owner_id).map(c => c.properties.hubspot_owner_id))];
-      const statuses = [...new Set(all.map(c => c.properties.subscription_status || '').filter(Boolean))].sort();
-      const stageLabels = { customer: 'Deal Won', '3319615195': 'Onboarding', '3318740675': 'Deployed', '3320851165': 'Active', '3318740676': 'Churned' };
+      const repIds = [...new Set(all.filter(d => d.properties.hubspot_owner_id).map(d => d.properties.hubspot_owner_id))];
+      const stageIds = [...new Set(all.map(d => d.properties.dealstage).filter(Boolean))];
 
       const filterDefs = [
-        { key: 'rep', label: 'Rep', getter: c => c.properties.hubspot_owner_id || 'unassigned',
+        { key: 'rep', label: 'Rep', getter: d => d.properties.hubspot_owner_id || 'unassigned',
           options: [...repIds.map(id => ({ value: id, label: owners[id] || 'ID: ' + id })), { value: 'unassigned', label: 'Unassigned' }] },
-        { key: 'status', label: 'Billing Status', getter: c => c.properties.subscription_status || 'none',
-          options: [...statuses.map(s => ({ value: s, label: SUB_STATUS_CONFIG[s]?.label || s })), { value: 'none', label: 'No Status' }] },
+        { key: 'stage', label: 'Current Stage', getter: d => d.properties.dealstage || '',
+          options: stageIds.map(s => ({ value: s, label: stageLabel(s) })) },
       ];
 
-      // Add counts
-      filterDefs.forEach(f => { const counts = {}; all.forEach(c => { const v = f.getter(c); counts[v] = (counts[v] || 0) + 1; }); f.options.forEach(o => { o.count = counts[o.value] || 0; }); });
+      filterDefs.forEach(f => { const counts = {}; all.forEach(d => { const v = f.getter(d); counts[v] = (counts[v] || 0) + 1; }); f.options.forEach(o => { o.count = counts[o.value] || 0; }); });
 
       const filtered = applyFilters('commpayout', all, filterDefs);
 
       // Stats
-      const totalARR = filtered.reduce((s, c) => s + (parseFloat(c.properties.arr) || 0), 0);
-      const totalMRR = filtered.reduce((s, c) => s + (parseFloat(c.properties.mrr) || 0), 0);
+      const totalARR = filtered.reduce((s, d) => s + (parseFloat(d.properties.hs_arr) || parseFloat(d.properties.amount) || 0), 0);
+      const totalMRR = filtered.reduce((s, d) => s + (parseFloat(d.properties.hs_mrr) || 0), 0);
       const totalComm = totalARR * COMMISSION_RATE;
-      const billing = filtered.filter(c => ['active','past_due','paused','scheduled'].includes(c.properties.subscription_status));
-      const billingARR = billing.reduce((s, c) => s + (parseFloat(c.properties.arr) || 0), 0);
-      const notBilling = filtered.filter(c => !['active','past_due','paused','scheduled'].includes(c.properties.subscription_status));
+      const deployed = filtered.filter(d => ['2986384064', '3452539597'].includes(d.properties.dealstage));
+      const deployedARR = deployed.reduce((s, d) => s + (parseFloat(d.properties.hs_arr) || parseFloat(d.properties.amount) || 0), 0);
+      const active = filtered.filter(d => d.properties.dealstage === '3452539597');
+      const activeARR = active.reduce((s, d) => s + (parseFloat(d.properties.hs_arr) || parseFloat(d.properties.amount) || 0), 0);
 
       // Per-rep summary
       const repSummary = {};
-      filtered.forEach(c => {
-        const oid = c.properties.hubspot_owner_id || 'unassigned';
-        if (!repSummary[oid]) repSummary[oid] = { arr: 0, mrr: 0, count: 0, commission: 0, billingCount: 0 };
-        const arr = parseFloat(c.properties.arr) || 0;
+      filtered.forEach(d => {
+        const oid = d.properties.hubspot_owner_id || 'unassigned';
+        if (!repSummary[oid]) repSummary[oid] = { arr: 0, mrr: 0, count: 0, commission: 0, deployedCount: 0, activeCount: 0 };
+        const arr = parseFloat(d.properties.hs_arr) || parseFloat(d.properties.amount) || 0;
         repSummary[oid].arr += arr;
-        repSummary[oid].mrr += parseFloat(c.properties.mrr) || 0;
+        repSummary[oid].mrr += parseFloat(d.properties.hs_mrr) || 0;
         repSummary[oid].count++;
         repSummary[oid].commission += arr * COMMISSION_RATE;
-        if (['active','past_due','paused','scheduled'].includes(c.properties.subscription_status)) repSummary[oid].billingCount++;
+        if (['2986384064', '3452539597'].includes(d.properties.dealstage)) repSummary[oid].deployedCount++;
+        if (d.properties.dealstage === '3452539597') repSummary[oid].activeCount++;
       });
       const repSorted = Object.entries(repSummary).filter(([id]) => id !== 'unassigned').sort((a, b) => b[1].arr - a[1].arr);
 
+      // Avg days through pipeline
+      const deployTimes = filtered.map(d => daysBetween(d.properties.hs_v2_date_entered_closedwon, d.properties.hs_v2_date_entered_2986384064)).filter(d => d !== null && d >= 0);
+      const activeTimes = filtered.map(d => daysBetween(d.properties.hs_v2_date_entered_closedwon, d.properties.hs_v2_date_entered_3452539597)).filter(d => d !== null && d >= 0);
+      const avgToDeploy = deployTimes.length > 0 ? (deployTimes.reduce((a, b) => a + b, 0) / deployTimes.length).toFixed(0) : '—';
+      const avgToActive = activeTimes.length > 0 ? (activeTimes.reduce((a, b) => a + b, 0) / activeTimes.length).toFixed(0) : '—';
+
       $('content').innerHTML = `
         ${buildFilterBar('commpayout', filterDefs)}
-        <p style="color:var(--muted);font-size:12px;margin-bottom:12px">Showing companies deployed or activated in the selected date range. Commission is earned when billing starts.</p>
+        <p style="color:var(--muted);font-size:12px;margin-bottom:12px">Based on deal pipeline stages. Closed Won date used for date filtering.</p>
         <div class="stats-row">
-          <div class="stat-card"><div class="label">Deployed / Active</div><div class="value">${fmtN(filtered.length)}</div></div>
-          <div class="stat-card"><div class="label">Billing</div><div class="value green">${fmtN(billing.length)}</div><div class="sub">${fmt(billingARR)} ARR</div></div>
-          <div class="stat-card"><div class="label">Total ARR</div><div class="value blue">${fmt(totalARR)}</div></div>
-          <div class="stat-card"><div class="label">Total MRR</div><div class="value purple">${fmt(totalMRR)}</div></div>
+          <div class="stat-card"><div class="label">Deals Closed Won</div><div class="value">${fmtN(filtered.length)}</div></div>
+          <div class="stat-card"><div class="label">Total ARR</div><div class="value green">${fmt(totalARR)}</div></div>
+          <div class="stat-card"><div class="label">Total MRR</div><div class="value blue">${fmt(totalMRR)}</div></div>
           <div class="stat-card"><div class="label">Commission (10%)</div><div class="value" style="color:#ff5c35">${fmt(totalComm)}</div></div>
-          <div class="stat-card"><div class="label">Not Yet Billing</div><div class="value ${notBilling.length > 0 ? 'amber' : 'green'}">${fmtN(notBilling.length)}</div></div>
+          <div class="stat-card"><div class="label">Deployed</div><div class="value purple">${fmtN(deployed.length)}</div><div class="sub">${fmt(deployedARR)} ARR</div></div>
+          <div class="stat-card"><div class="label">Deal Active</div><div class="value green">${fmtN(active.length)}</div><div class="sub">${fmt(activeARR)} ARR</div></div>
+          <div class="stat-card"><div class="label">Avg Days to Deploy</div><div class="value">${avgToDeploy}</div></div>
+          <div class="stat-card"><div class="label">Avg Days to Active</div><div class="value">${avgToActive}</div></div>
         </div>
 
         <div class="card">
           <div class="card-header"><h3>Commission by Rep</h3></div>
           <div class="card-body" style="padding:0;overflow-x:auto">
             <table>
-              <thead><tr><th>Rep</th><th>Customers</th><th>Billing</th><th>ARR</th><th>MRR</th><th>Commission (10%)</th></tr></thead>
+              <thead><tr><th>Rep</th><th>Deals</th><th>Deployed</th><th>Active</th><th>ARR</th><th>MRR</th><th>Commission (10%)</th></tr></thead>
               <tbody>
                 ${repSorted.map(([id, r]) => `<tr>
                   <td style="font-weight:700">${esc(owners[id] || 'ID: ' + id)}</td>
                   <td>${r.count}</td>
-                  <td>${r.billingCount} <span style="color:var(--muted);font-size:11px">of ${r.count}</span></td>
+                  <td>${r.deployedCount}</td>
+                  <td style="color:var(--green)">${r.activeCount}</td>
                   <td style="font-weight:700;color:var(--green)">${fmt(r.arr)}</td>
                   <td>${fmt(r.mrr)}</td>
                   <td style="font-weight:700;color:var(--purple)">${fmt(r.commission)}</td>
@@ -2726,7 +2733,8 @@ const App = (() => {
               <tfoot><tr style="background:var(--bg);font-weight:800">
                 <td>TOTAL</td>
                 <td>${filtered.length}</td>
-                <td>${billing.length}</td>
+                <td>${deployed.length}</td>
+                <td style="color:var(--green)">${active.length}</td>
                 <td style="color:var(--green)">${fmt(totalARR)}</td>
                 <td>${fmt(totalMRR)}</td>
                 <td style="color:var(--purple)">${fmt(totalComm)}</td>
@@ -2736,53 +2744,48 @@ const App = (() => {
         </div>
 
         <div class="card">
-          <div class="card-header"><h3>Deployment & Billing Timeline (${filtered.length})</h3></div>
+          <div class="card-header"><h3>Deal Pipeline Timeline (${filtered.length})</h3></div>
           <div class="card-body" style="padding:0;overflow-x:auto;max-height:700px;overflow-y:auto">
             <table>
               <thead><tr>
-                <th>Company</th>
+                <th>Deal</th>
                 <th>Rep</th>
-                <th>Deal Won</th>
+                <th>Closed Won</th>
+                <th>Onboarding</th>
+                <th>Install</th>
                 <th>Deployed</th>
-                <th>Billing Started</th>
-                <th>Days to Deploy</th>
-                <th>Billing Status</th>
+                <th>Deal Active</th>
+                <th>Current Stage</th>
                 <th>ARR</th>
                 <th>MRR</th>
                 <th>Commission</th>
               </tr></thead>
               <tbody>
-                ${filtered.sort((a, b) => {
-                  const da = a.properties.hs_v2_date_entered_3318740675 || a.properties.hs_v2_date_entered_3320851165 || '';
-                  const db = b.properties.hs_v2_date_entered_3318740675 || b.properties.hs_v2_date_entered_3320851165 || '';
-                  return db.localeCompare(da);
-                }).map(c => {
-                  const wonDate = c.properties.hs_v2_date_entered_customer || c.properties.closedate;
-                  const deployDate = c.properties.hs_v2_date_entered_3318740675;
-                  const billingDate = c.properties.activation_date || c.properties.hs_v2_date_entered_3320851165;
-                  const daysToD = daysBetween(wonDate, deployDate || billingDate);
-                  const arr = parseFloat(c.properties.arr) || 0;
-                  const mrr = parseFloat(c.properties.mrr) || 0;
+                ${filtered.map(d => {
+                  const arr = parseFloat(d.properties.hs_arr) || parseFloat(d.properties.amount) || 0;
+                  const mrr = parseFloat(d.properties.hs_mrr) || 0;
                   const comm = arr * COMMISSION_RATE;
-                  const subStatus = c.properties.subscription_status || '';
-                  const cfg = SUB_STATUS_CONFIG[subStatus] || { label: subStatus || 'Pending', color: '#999' };
-                  const isBilling = ['active','past_due','paused','scheduled'].includes(subStatus);
+                  const stage = d.properties.dealstage;
+                  const isActive = stage === '3452539597';
+                  const isDeployed = stage === '2986384064';
+                  const stageCls = isActive ? 'badge-green' : isDeployed ? 'badge-blue' : '';
                   return `<tr>
-                    <td style="font-weight:700">${esc(c.properties.name || '—')}</td>
-                    <td>${esc(owners[c.properties.hubspot_owner_id] || '—')}</td>
-                    <td>${fmtDate(wonDate)}</td>
-                    <td>${fmtDate(deployDate)}</td>
-                    <td>${fmtDate(billingDate)}</td>
-                    <td>${daysToD !== null ? (daysToD <= 7 ? `<span style="color:var(--green)">${daysToD}d</span>` : daysToD <= 21 ? `<span style="color:var(--amber)">${daysToD}d</span>` : `<span style="color:var(--red)">${daysToD}d</span>`) : '—'}</td>
-                    <td><span class="badge" style="background:${cfg.color}22;color:${cfg.color}">${cfg.label || 'Pending'}</span></td>
-                    <td style="font-weight:700;color:${isBilling ? 'var(--green)' : 'var(--muted)'}">${fmt(arr)}</td>
+                    <td style="font-weight:700">${esc(d.properties.dealname || '—')}</td>
+                    <td>${esc(owners[d.properties.hubspot_owner_id] || '—')}</td>
+                    <td>${fmtDate(d.properties.hs_v2_date_entered_closedwon)}</td>
+                    <td>${fmtDate(d.properties.hs_v2_date_entered_2992070353)}</td>
+                    <td>${fmtDate(d.properties.hs_v2_date_entered_2986384063)}</td>
+                    <td>${fmtDate(d.properties.hs_v2_date_entered_2986384064)}</td>
+                    <td>${fmtDate(d.properties.hs_v2_date_entered_3452539597)}</td>
+                    <td><span class="badge ${stageCls}">${stageLabel(stage)}</span></td>
+                    <td style="font-weight:700;color:var(--green)">${fmt(arr)}</td>
                     <td>${fmt(mrr)}</td>
                     <td style="font-weight:700;color:var(--purple)">${fmt(comm)}</td>
                   </tr>`;
                 }).join('')}
               </tbody>
               <tfoot><tr style="background:var(--bg);font-weight:800">
-                <td colspan="7">TOTAL</td>
+                <td colspan="8">TOTAL</td>
                 <td style="color:var(--green)">${fmt(totalARR)}</td>
                 <td>${fmt(totalMRR)}</td>
                 <td style="color:var(--purple)">${fmt(totalComm)}</td>
@@ -2790,29 +2793,6 @@ const App = (() => {
             </table>
           </div>
         </div>
-
-        ${notBilling.length > 0 ? `<div class="card" style="border-left:4px solid var(--amber)">
-          <div class="card-header"><h3 style="color:var(--amber)">Deployed but Not Yet Billing (${notBilling.length})</h3></div>
-          <div class="card-body" style="padding:0;overflow-x:auto">
-            <table>
-              <thead><tr><th>Company</th><th>Rep</th><th>Deal Won</th><th>Deployed</th><th>ARR</th><th>Status</th></tr></thead>
-              <tbody>
-                ${notBilling.map(c => {
-                  const subStatus = c.properties.subscription_status || '';
-                  const cfg = SUB_STATUS_CONFIG[subStatus] || { label: subStatus || 'Pending', color: '#999' };
-                  return `<tr>
-                    <td style="font-weight:700">${esc(c.properties.name || '—')}</td>
-                    <td>${esc(owners[c.properties.hubspot_owner_id] || '—')}</td>
-                    <td>${fmtDate(c.properties.hs_v2_date_entered_customer)}</td>
-                    <td>${fmtDate(c.properties.hs_v2_date_entered_3318740675)}</td>
-                    <td style="font-weight:600">${fmt(c.properties.arr)}</td>
-                    <td><span class="badge" style="background:${cfg.color}22;color:${cfg.color}">${cfg.label || 'Pending'}</span></td>
-                  </tr>`;
-                }).join('')}
-              </tbody>
-            </table>
-          </div>
-        </div>` : ''}
       `;
     } catch (e) {
       $('content').innerHTML = `<div class="loading-state" style="color:var(--red)">Error: ${esc(e.message)}</div>`;
