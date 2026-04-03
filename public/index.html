@@ -332,7 +332,7 @@
     <div class="brand">
       <img src="aio-logo.png" alt="AIO" style="width:70px;margin-bottom:4px;filter:brightness(0) invert(1)">
       <h1>AIO Reports Centre</h1>
-      <small>v1.0.11</small>
+      <small>v1.0.12</small>
     </div>
     <nav>
       <div class="nav-label">Overview</div>
@@ -2623,14 +2623,24 @@ const App = (() => {
   // ── Commission Payouts ──────────────────────────────────────────
   // Uses DEAL pipeline stages: Closed Won → Onboarding → Install/Training → Deployed → Deal Active
   const DEAL_STAGES = {
+    '3262845631': { label: 'Sales Accepted' },
+    appointmentscheduled: { label: 'Appointment Scheduled' },
+    '2717103849': { label: 'Demo/Quote' },
+    stage_0: { label: 'Quote/Proposal Sent' },
+    contractsent: { label: 'Followed Up' },
+    '2992080601': { label: 'On Hold' },
+    '2767738593': { label: 'Signed/Awaiting Payment' },
     closedwon: { label: 'Closed Won', dateProp: 'hs_v2_date_entered_closedwon' },
     '2992070353': { label: 'Onboarding', dateProp: 'hs_v2_date_entered_2992070353' },
     '2986384063': { label: 'Install/Training', dateProp: 'hs_v2_date_entered_2986384063' },
     '2986384064': { label: 'Deployed', dateProp: 'hs_v2_date_entered_2986384064' },
     '3452539597': { label: 'Deal Active', dateProp: 'hs_v2_date_entered_3452539597' },
+    '3060460231': { label: 'Cancelled Before Live' },
+    '3069369052': { label: 'Churned' },
+    closedlost: { label: 'Closed Lost' },
   };
-  // "Closed Won" for this report = any deal that reached closedwon, onboarding, install, deployed, or active
-  const CLOSED_WON_STAGES = ['closedwon', '2992070353', '2986384063', '2986384064', '3452539597', '3060460231'];
+  const EXCLUDED_DEAL_STAGES = ['3060460231', '3069369052', 'closedlost'];
+  const CLOSED_WON_STAGES = ['closedwon', '2992070353', '2986384063', '2986384064', '3452539597'];
 
   async function renderCommPayout() {
     try {
@@ -2646,8 +2656,8 @@ const App = (() => {
         true
       );
 
-      // Exclude cancelled/closed-lost deals (stage 3069369052)
-      const notCancelled = deals.results.filter(d => d.properties.dealstage !== '3069369052');
+      // Exclude cancelled/churned/closed-lost deals
+      const notCancelled = deals.results.filter(d => !EXCLUDED_DEAL_STAGES.includes(d.properties.dealstage));
 
       // Client-side date filter: show deals where ANY pipeline stage date falls in selected range
       const stageDateProps = [
