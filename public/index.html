@@ -2618,11 +2618,12 @@ const App = (() => {
   // ── Commission Payouts ──────────────────────────────────────────
   async function renderCommPayout() {
     try {
+      const dateFilters = getDateFilters('hs_v2_date_entered_customer');
       const companies = await getCachedSearch('commpayout_companies', 'companies',
         ['name','arr','mrr','hubspot_owner_id','hs_v2_date_entered_customer','hs_v2_date_entered_3318740675',
          'hs_v2_date_entered_3320851165','hs_v2_date_entered_3319615195','activation_date',
          'subscription_status','lifecyclestage','closedate','industrytype','adyen_processing_arr'],
-        [{ propertyName: 'hs_v2_date_entered_customer', operator: 'HAS_PROPERTY' }],
+        [{ propertyName: 'hs_v2_date_entered_customer', operator: 'HAS_PROPERTY' }, ...dateFilters],
         [{ propertyName: 'hs_v2_date_entered_customer', direction: 'DESCENDING' }]
       );
 
