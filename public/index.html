@@ -332,7 +332,7 @@
     <div class="brand">
       <img src="aio-logo.png" alt="AIO" style="width:70px;margin-bottom:4px;filter:brightness(0) invert(1)">
       <h1>AIO Reports Centre</h1>
-      <small>v1.0.15</small>
+      <small>v1.0.16</small>
     </div>
     <nav>
       <div class="nav-label">Overview</div>
@@ -853,7 +853,33 @@ const App = (() => {
       const monthKeys = Object.keys(monthlyRev).sort();
       const maxMonthRev = Math.max(...Object.values(monthlyRev), 1);
 
+      // Export handler
+      window._revenueExport = () => {
+        const headers = ['Deal ID','Deal Name','Amount','Stage','Type','Rep','Close Date','Created','Status'];
+        const rows = allDeals.map(d => {
+          const st = STAGE_MAP[d.properties.dealstage];
+          let status = 'Open';
+          if (d.properties.hs_is_closed_won === 'true' || d.properties.dealstage === 'closedwon') status = 'Won';
+          else if (d.properties.hs_is_closed_lost === 'true' || d.properties.dealstage === 'closedlost') status = 'Lost';
+          return [
+            d.id,
+            d.properties.dealname || '',
+            parseFloat(d.properties.amount) || 0,
+            st?.label || d.properties.dealstage || '',
+            d.properties.dealtype || '',
+            owners[d.properties.hubspot_owner_id] || '',
+            d.properties.closedate ? new Date(d.properties.closedate).toISOString().slice(0,10) : '',
+            d.properties.createdate ? new Date(d.properties.createdate).toISOString().slice(0,10) : '',
+            status,
+          ];
+        });
+        downloadCSV('revenue_' + dateFrom + '_to_' + dateTo + '.csv', headers, rows);
+      };
+
       $('content').innerHTML = `
+        <div style="display:flex;justify-content:flex-end;margin-bottom:12px">
+          <button onclick="window._revenueExport()" style="background:var(--primary);color:#fff;border:none;padding:6px 16px;border-radius:6px;cursor:pointer;font-size:13px;font-weight:600">&#x1f4e5; Export CSV</button>
+        </div>
         <div class="stats-row">
           <div class="stat-card" data-drill="${drillWon}" style="cursor:pointer"><div class="label">Closed Won Revenue</div><div class="value green">${fmt(totalWon)}</div><div class="sub">${fmtN(wonDeals.length)} deals</div></div>
           <div class="stat-card"><div class="label">Avg Deal Size</div><div class="value blue">${fmt(avgDealSize)}</div></div>
