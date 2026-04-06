@@ -332,7 +332,7 @@
     <div class="brand">
       <img src="aio-logo.png" alt="AIO" style="width:70px;margin-bottom:4px;filter:brightness(0) invert(1)">
       <h1>AIO Reports Centre</h1>
-      <small>v1.0.14</small>
+      <small>v1.0.15</small>
     </div>
     <nav>
       <div class="nav-label">Overview</div>
@@ -2678,19 +2678,53 @@ const App = (() => {
   const EXCLUDED_DEAL_STAGES = ['3060460231', '3069369052', 'closedlost'];
   const CLOSED_WON_STAGES = ['closedwon', '2992070353', '2986384063', '2986384064', '3452539597'];
 
+  // Commission payment tracking via API
+  let _commPayments = null;
+  async function loadCommPayments() {
+    if (_commPayments) return _commPayments;
+    try {
+      const res = await fetch('/api/commissions', { headers: { 'Authorization': `Bearer ${sessionToken}` } });
+      if (res.ok) _commPayments = await res.json();
+      else _commPayments = {};
+    } catch (_) { _commPayments = {}; }
+    return _commPayments;
+  }
+  async function saveCommPayment(dealId, data) {
+    await fetch('/api/commissions', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${sessionToken}` },
+      body: JSON.stringify({ dealId, ...data }),
+    });
+    _commPayments = null; // bust cache
+  }
+
+  // CSV export helper
+  function downloadCSV(filename, headers, rows) {
+    const escape = v => `"${String(v ?? '').replace(/"/g, '""')}"`;
+    const csv = [headers.map(escape).join(','), ...rows.map(r => r.map(escape).join(','))].join('\n');
+    const blob = new Blob([csv], { type: 'text/csv' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = filename; a.click();
+    URL.revokeObjectURL(url);
+  }
+
   async function renderCommPayout() {
     try {
-      // Fetch ALL closed-won deals (no date filter on query)
-      const deals = await getCachedSearch('commpayout_deals_all', 'deals',
-        ['dealname','amount','closedate','hubspot_owner_id','dealstage','hs_is_closed_won',
-         'hs_arr','hs_mrr','pipeline',
-         'hs_v2_date_entered_closedwon','hs_v2_date_entered_2992070353',
-         'hs_v2_date_entered_2986384063','hs_v2_date_entered_2986384064',
-         'hs_v2_date_entered_3452539597','hs_v2_date_entered_current_stage'],
-        [{ propertyName: 'hs_is_closed_won', operator: 'EQ', value: 'true' }],
-        [{ propertyName: 'closedate', direction: 'DESCENDING' }],
-        true
-      );
+      // Fetch deals and commission payment records in parallel
+      const [deals, payments] = await Promise.all([
+        getCachedSearch('commpayout_deals_all', 'deals',
+          ['dealname','amount','closedate','hubspot_owner_id','dealstage','hs_is_closed_won',
+           'hs_arr','hs_mrr','pipeline',
+           'hs_v2_date_entered_closedwon','hs_v2_date_entered_2992070353',
+           'hs_v2_date_entered_2986384063','hs_v2_date_entered_2986384064',
+           'hs_v2_date_entered_3452539597','hs_v2_date_entered_current_stage'],
+          [{ propertyName: 'hs_is_closed_won', operator: 'EQ', value: 'true' }],
+          [{ propertyName: 'closedate', direction: 'DESCENDING' }],
+          true
+        ),
+        loadCommPayments(),
+      ]);
 
       // Exclude cancelled/churned/closed-lost deals
       const notCancelled = deals.results.filter(d => !EXCLUDED_DEAL_STAGES.includes(d.properties.dealstage));
@@ -2717,22 +2751,40 @@ const App = (() => {
         });
       });
       const fmtDate = (d) => d ? new Date(d).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '—';
+      const fmtDateCSV = (d) => d ? new Date(d).toISOString().slice(0, 10) : '';
       const daysBetween = (a, b) => (a && b) ? Math.round((new Date(b) - new Date(a)) / 86400000) : null;
 
-      // Current stage label
       function stageLabel(id) { return DEAL_STAGES[id]?.label || id || '—'; }
+
+      // Build deal order per rep (sorted by close date ascending) to determine first-10 prepay eligibility
+      // Use ALL closed-won deals (not just date-filtered) to get accurate deal sequence
+      const repDealOrder = {};
+      notCancelled.slice().sort((a, b) => new Date(a.properties.closedate) - new Date(b.properties.closedate)).forEach(d => {
+        const oid = d.properties.hubspot_owner_id || 'unassigned';
+        if (!repDealOrder[oid]) repDealOrder[oid] = [];
+        repDealOrder[oid].push(d.id);
+      });
+
+      // Get deal's sequence number for its rep
+      function getDealSeq(d) {
+        const oid = d.properties.hubspot_owner_id || 'unassigned';
+        const idx = (repDealOrder[oid] || []).indexOf(d.id);
+        return idx >= 0 ? idx + 1 : null;
+      }
 
       // Filters
       const repIds = [...new Set(all.filter(d => d.properties.hubspot_owner_id).map(d => d.properties.hubspot_owner_id))];
       const stageIds = [...new Set(all.map(d => d.properties.dealstage).filter(Boolean))];
+      const payStatuses = ['unpaid', 'prepaid', 'paid', 'clawback'];
 
       const filterDefs = [
         { key: 'rep', label: 'Rep', getter: d => d.properties.hubspot_owner_id || 'unassigned',
           options: [...repIds.map(id => ({ value: id, label: owners[id] || 'ID: ' + id })), { value: 'unassigned', label: 'Unassigned' }] },
         { key: 'stage', label: 'Current Stage', getter: d => d.properties.dealstage || '',
           options: stageIds.map(s => ({ value: s, label: stageLabel(s) })) },
+        { key: 'payStatus', label: 'Payment Status', getter: d => (payments[d.id]?.status || 'unpaid'),
+          options: payStatuses.map(s => ({ value: s, label: s.charAt(0).toUpperCase() + s.slice(1) })) },
       ];
-
       filterDefs.forEach(f => { const counts = {}; all.forEach(d => { const v = f.getter(d); counts[v] = (counts[v] || 0) + 1; }); f.options.forEach(o => { o.count = counts[o.value] || 0; }); });
 
       const filtered = applyFilters('commpayout', all, filterDefs);
@@ -2740,22 +2792,25 @@ const App = (() => {
       // Stats
       const totalARR = filtered.reduce((s, d) => s + (parseFloat(d.properties.hs_arr) || parseFloat(d.properties.amount) || 0), 0);
       const totalMRR = filtered.reduce((s, d) => s + (parseFloat(d.properties.hs_mrr) || 0), 0);
-      const totalComm = totalARR * COMMISSION_RATE;
+      const totalCommDue = totalARR * COMMISSION_RATE;
+      const totalCommPaid = filtered.reduce((s, d) => s + (payments[d.id]?.amountPaid || 0), 0);
+      const totalCommOwed = totalCommDue - totalCommPaid;
       const deployed = filtered.filter(d => ['2986384064', '3452539597'].includes(d.properties.dealstage));
       const deployedARR = deployed.reduce((s, d) => s + (parseFloat(d.properties.hs_arr) || parseFloat(d.properties.amount) || 0), 0);
       const active = filtered.filter(d => d.properties.dealstage === '3452539597');
       const activeARR = active.reduce((s, d) => s + (parseFloat(d.properties.hs_arr) || parseFloat(d.properties.amount) || 0), 0);
 
-      // Per-rep summary
+      // Per-rep summary with payment tracking
       const repSummary = {};
       filtered.forEach(d => {
         const oid = d.properties.hubspot_owner_id || 'unassigned';
-        if (!repSummary[oid]) repSummary[oid] = { arr: 0, mrr: 0, count: 0, commission: 0, deployedCount: 0, activeCount: 0 };
+        if (!repSummary[oid]) repSummary[oid] = { arr: 0, mrr: 0, count: 0, commDue: 0, commPaid: 0, deployedCount: 0, activeCount: 0 };
         const arr = parseFloat(d.properties.hs_arr) || parseFloat(d.properties.amount) || 0;
         repSummary[oid].arr += arr;
         repSummary[oid].mrr += parseFloat(d.properties.hs_mrr) || 0;
         repSummary[oid].count++;
-        repSummary[oid].commission += arr * COMMISSION_RATE;
+        repSummary[oid].commDue += arr * COMMISSION_RATE;
+        repSummary[oid].commPaid += payments[d.id]?.amountPaid || 0;
         if (['2986384064', '3452539597'].includes(d.properties.dealstage)) repSummary[oid].deployedCount++;
         if (d.properties.dealstage === '3452539597') repSummary[oid].activeCount++;
       });
@@ -2767,35 +2822,108 @@ const App = (() => {
       const avgToDeploy = deployTimes.length > 0 ? (deployTimes.reduce((a, b) => a + b, 0) / deployTimes.length).toFixed(0) : '—';
       const avgToActive = activeTimes.length > 0 ? (activeTimes.reduce((a, b) => a + b, 0) / activeTimes.length).toFixed(0) : '—';
 
+      // CAC: total commission paid as acquisition cost
+      const totalCAC = totalCommPaid;
+      const avgCAC = filtered.length > 0 ? totalCAC / filtered.length : 0;
+
+      // Export function
+      window._commPayoutExport = () => {
+        const headers = ['Deal ID','Deal Name','Rep','Close Date','Closed Won','Onboarding','Install','Deployed','Deal Active','Current Stage','ARR','MRR','Deal #','Comm Due','Comm Paid','Comm Owed','Pay Status','Prepay Eligible','Notes'];
+        const rows = filtered.map(d => {
+          const arr = parseFloat(d.properties.hs_arr) || parseFloat(d.properties.amount) || 0;
+          const mrr = parseFloat(d.properties.hs_mrr) || 0;
+          const commDue = arr * COMMISSION_RATE;
+          const pay = payments[d.id] || {};
+          const paid = pay.amountPaid || 0;
+          const seq = getDealSeq(d);
+          return [
+            d.id,
+            d.properties.dealname || '',
+            owners[d.properties.hubspot_owner_id] || '',
+            fmtDateCSV(d.properties.closedate),
+            fmtDateCSV(d.properties.hs_v2_date_entered_closedwon || d.properties.closedate),
+            fmtDateCSV(d.properties.hs_v2_date_entered_2992070353),
+            fmtDateCSV(d.properties.hs_v2_date_entered_2986384063),
+            fmtDateCSV(d.properties.hs_v2_date_entered_2986384064),
+            fmtDateCSV(d.properties.hs_v2_date_entered_3452539597),
+            stageLabel(d.properties.dealstage),
+            arr.toFixed(2),
+            mrr.toFixed(2),
+            seq || '',
+            commDue.toFixed(2),
+            paid.toFixed(2),
+            (commDue - paid).toFixed(2),
+            pay.status || 'unpaid',
+            seq && seq <= 10 ? 'Yes (50%)' : 'No',
+            pay.notes || '',
+          ];
+        });
+        downloadCSV('commission_payouts_' + dateFrom + '_to_' + dateTo + '.csv', headers, rows);
+      };
+
+      // Payment update handler
+      window._commPayUpdate = async (dealId, action) => {
+        const d = filtered.find(d => d.id === dealId);
+        if (!d) return;
+        const arr = parseFloat(d.properties.hs_arr) || parseFloat(d.properties.amount) || 0;
+        const commDue = arr * COMMISSION_RATE;
+        const seq = getDealSeq(d);
+        const isPrepayEligible = seq && seq <= 10;
+
+        if (action === 'prepay') {
+          await saveCommPayment(dealId, { amountPaid: commDue * 0.5, isPrepay: true, status: 'prepaid', datePaid: new Date().toISOString().slice(0, 10) });
+        } else if (action === 'pay') {
+          await saveCommPayment(dealId, { amountPaid: commDue, isPrepay: false, status: 'paid', datePaid: new Date().toISOString().slice(0, 10) });
+        } else if (action === 'clawback') {
+          await saveCommPayment(dealId, { amountPaid: 0, isPrepay: false, status: 'clawback', datePaid: null, notes: 'Clawback initiated' });
+        } else if (action === 'reset') {
+          await saveCommPayment(dealId, { amountPaid: 0, isPrepay: false, status: 'unpaid', datePaid: null });
+        }
+        render();
+      };
+
+      const STATUS_BADGES = {
+        unpaid: '<span class="badge badge-gray">Unpaid</span>',
+        prepaid: '<span class="badge badge-amber">50% Prepaid</span>',
+        paid: '<span class="badge badge-green">Paid</span>',
+        clawback: '<span class="badge badge-red">Clawback</span>',
+      };
+
       $('content').innerHTML = `
         ${buildFilterBar('commpayout', filterDefs)}
-        <p style="color:var(--muted);font-size:12px;margin-bottom:12px">Based on deal pipeline stages. Shows deals with any stage activity in the selected date range.</p>
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+          <p style="color:var(--muted);font-size:12px;margin:0">Based on deal pipeline stages. Shows deals with any stage activity in the selected date range.</p>
+          <button onclick="window._commPayoutExport()" style="background:var(--primary);color:#fff;border:none;padding:6px 16px;border-radius:6px;cursor:pointer;font-size:13px;font-weight:600">&#x1f4e5; Export CSV</button>
+        </div>
         <div class="stats-row">
           <div class="stat-card"><div class="label">Deals Closed Won</div><div class="value">${fmtN(filtered.length)}</div></div>
           <div class="stat-card"><div class="label">Total ARR</div><div class="value green">${fmt(totalARR)}</div></div>
-          <div class="stat-card"><div class="label">Total MRR</div><div class="value blue">${fmt(totalMRR)}</div></div>
-          <div class="stat-card"><div class="label">Commission (10%)</div><div class="value" style="color:#ff5c35">${fmt(totalComm)}</div></div>
+          <div class="stat-card"><div class="label">Commission Due</div><div class="value" style="color:#ff5c35">${fmt(totalCommDue)}</div></div>
+          <div class="stat-card"><div class="label">Commission Paid</div><div class="value green">${fmt(totalCommPaid)}</div></div>
+          <div class="stat-card"><div class="label">Commission Owed</div><div class="value ${totalCommOwed > 0 ? 'amber' : 'green'}">${fmt(totalCommOwed)}</div></div>
+          <div class="stat-card"><div class="label">Avg CAC</div><div class="value blue">${fmt(avgCAC)}</div><div class="sub">${fmt(totalCAC)} total</div></div>
           <div class="stat-card"><div class="label">Deployed</div><div class="value purple">${fmtN(deployed.length)}</div><div class="sub">${fmt(deployedARR)} ARR</div></div>
           <div class="stat-card"><div class="label">Deal Active</div><div class="value green">${fmtN(active.length)}</div><div class="sub">${fmt(activeARR)} ARR</div></div>
-          <div class="stat-card"><div class="label">Avg Days to Deploy</div><div class="value">${avgToDeploy}</div></div>
-          <div class="stat-card"><div class="label">Avg Days to Active</div><div class="value">${avgToActive}</div></div>
         </div>
 
         <div class="card">
           <div class="card-header"><h3>Commission by Rep</h3></div>
           <div class="card-body" style="padding:0;overflow-x:auto">
             <table>
-              <thead><tr><th>Rep</th><th>Deals</th><th>Deployed</th><th>Active</th><th>ARR</th><th>MRR</th><th>Commission (10%)</th></tr></thead>
+              <thead><tr><th>Rep</th><th>Deals</th><th>Deployed</th><th>Active</th><th>ARR</th><th>Comm Due</th><th>Comm Paid</th><th>Comm Owed</th></tr></thead>
               <tbody>
-                ${repSorted.map(([id, r]) => `<tr>
+                ${repSorted.map(([id, r]) => {
+                  const owed = r.commDue - r.commPaid;
+                  return `<tr>
                   <td style="font-weight:700">${esc(owners[id] || 'ID: ' + id)}</td>
                   <td>${r.count}</td>
                   <td>${r.deployedCount}</td>
                   <td style="color:var(--green)">${r.activeCount}</td>
                   <td style="font-weight:700;color:var(--green)">${fmt(r.arr)}</td>
-                  <td>${fmt(r.mrr)}</td>
-                  <td style="font-weight:700;color:var(--purple)">${fmt(r.commission)}</td>
-                </tr>`).join('')}
+                  <td style="font-weight:700;color:var(--purple)">${fmt(r.commDue)}</td>
+                  <td style="font-weight:700;color:var(--green)">${fmt(r.commPaid)}</td>
+                  <td style="font-weight:700;color:${owed > 0 ? 'var(--amber)' : 'var(--green)'}">${fmt(owed)}</td>
+                </tr>`;}).join('')}
               </tbody>
               <tfoot><tr style="background:var(--bg);font-weight:800">
                 <td>TOTAL</td>
@@ -2803,59 +2931,88 @@ const App = (() => {
                 <td>${deployed.length}</td>
                 <td style="color:var(--green)">${active.length}</td>
                 <td style="color:var(--green)">${fmt(totalARR)}</td>
-                <td>${fmt(totalMRR)}</td>
-                <td style="color:var(--purple)">${fmt(totalComm)}</td>
+                <td style="color:var(--purple)">${fmt(totalCommDue)}</td>
+                <td style="color:var(--green)">${fmt(totalCommPaid)}</td>
+                <td style="color:${totalCommOwed > 0 ? 'var(--amber)' : 'var(--green)'}">${fmt(totalCommOwed)}</td>
               </tr></tfoot>
             </table>
           </div>
         </div>
 
         <div class="card">
-          <div class="card-header"><h3>Deal Pipeline Timeline (${filtered.length})</h3></div>
+          <div class="card-header" style="display:flex;justify-content:space-between;align-items:center">
+            <h3>Commission Payouts Detail (${filtered.length})</h3>
+          </div>
           <div class="card-body" style="padding:0;overflow-x:auto;max-height:700px;overflow-y:auto">
-            <table>
+            <table style="font-size:12px">
               <thead><tr>
+                <th>Deal ID</th>
                 <th>Deal</th>
                 <th>Rep</th>
+                <th>Deal #</th>
                 <th>Closed Won</th>
-                <th>Onboarding</th>
-                <th>Install</th>
                 <th>Deployed</th>
                 <th>Deal Active</th>
-                <th>Current Stage</th>
+                <th>Stage</th>
                 <th>ARR</th>
-                <th>MRR</th>
-                <th>Commission</th>
+                <th>Comm Due</th>
+                <th>Comm Paid</th>
+                <th>Comm Owed</th>
+                <th>Status</th>
+                <th>Action</th>
               </tr></thead>
               <tbody>
                 ${filtered.map(d => {
                   const arr = parseFloat(d.properties.hs_arr) || parseFloat(d.properties.amount) || 0;
-                  const mrr = parseFloat(d.properties.hs_mrr) || 0;
-                  const comm = arr * COMMISSION_RATE;
+                  const commDue = arr * COMMISSION_RATE;
+                  const pay = payments[d.id] || {};
+                  const paid = pay.amountPaid || 0;
+                  const owed = commDue - paid;
+                  const status = pay.status || 'unpaid';
                   const stage = d.properties.dealstage;
                   const isActive = stage === '3452539597';
                   const isDeployed = stage === '2986384064';
                   const stageCls = isActive ? 'badge-green' : isDeployed ? 'badge-blue' : '';
+                  const seq = getDealSeq(d);
+                  const isPrepayEligible = seq && seq <= 10;
+                  // Action buttons
+                  let actions = '';
+                  if (status === 'unpaid') {
+                    if (isPrepayEligible) actions += `<button onclick="window._commPayUpdate('${d.id}','prepay')" style="font-size:11px;padding:2px 8px;border:1px solid var(--amber);background:transparent;color:var(--amber);border-radius:4px;cursor:pointer;margin-right:4px" title="Pay 50% upfront (deal #${seq} of first 10)">50% Pre</button>`;
+                    actions += `<button onclick="window._commPayUpdate('${d.id}','pay')" style="font-size:11px;padding:2px 8px;border:1px solid var(--green);background:transparent;color:var(--green);border-radius:4px;cursor:pointer" title="Mark as fully paid">Pay</button>`;
+                  } else if (status === 'prepaid') {
+                    actions += `<button onclick="window._commPayUpdate('${d.id}','pay')" style="font-size:11px;padding:2px 8px;border:1px solid var(--green);background:transparent;color:var(--green);border-radius:4px;cursor:pointer;margin-right:4px">Pay Full</button>`;
+                    actions += `<button onclick="window._commPayUpdate('${d.id}','clawback')" style="font-size:11px;padding:2px 8px;border:1px solid var(--red);background:transparent;color:var(--red);border-radius:4px;cursor:pointer">Claw</button>`;
+                  } else if (status === 'paid') {
+                    actions += `<button onclick="window._commPayUpdate('${d.id}','clawback')" style="font-size:11px;padding:2px 8px;border:1px solid var(--red);background:transparent;color:var(--red);border-radius:4px;cursor:pointer">Claw</button>`;
+                  } else if (status === 'clawback') {
+                    actions += `<button onclick="window._commPayUpdate('${d.id}','reset')" style="font-size:11px;padding:2px 8px;border:1px solid var(--muted);background:transparent;color:var(--muted);border-radius:4px;cursor:pointer">Reset</button>`;
+                  }
                   return `<tr>
+                    <td style="font-family:monospace;font-size:11px;color:var(--muted)">${d.id}</td>
                     <td style="font-weight:700">${hsDeal(d)}</td>
                     <td>${esc(owners[d.properties.hubspot_owner_id] || '—')}</td>
+                    <td style="text-align:center">${seq ? `<span style="font-size:11px;${isPrepayEligible ? 'color:var(--amber);font-weight:700' : ''}">#${seq}</span>` : '—'}</td>
                     <td>${fmtDate(d.properties.hs_v2_date_entered_closedwon || d.properties.closedate)}</td>
-                    <td>${fmtDate(d.properties.hs_v2_date_entered_2992070353)}</td>
-                    <td>${fmtDate(d.properties.hs_v2_date_entered_2986384063)}</td>
                     <td>${fmtDate(d.properties.hs_v2_date_entered_2986384064)}</td>
                     <td>${fmtDate(d.properties.hs_v2_date_entered_3452539597)}</td>
                     <td><span class="badge ${stageCls}">${stageLabel(stage)}</span></td>
                     <td style="font-weight:700;color:var(--green)">${fmt(arr)}</td>
-                    <td>${fmt(mrr)}</td>
-                    <td style="font-weight:700;color:var(--purple)">${fmt(comm)}</td>
+                    <td style="font-weight:600">${fmt(commDue)}</td>
+                    <td style="font-weight:600;color:${paid > 0 ? 'var(--green)' : 'var(--muted)'}">${fmt(paid)}</td>
+                    <td style="font-weight:600;color:${owed > 0 ? 'var(--amber)' : 'var(--green)'}">${fmt(owed)}</td>
+                    <td>${STATUS_BADGES[status] || status}</td>
+                    <td style="white-space:nowrap">${actions}</td>
                   </tr>`;
                 }).join('')}
               </tbody>
               <tfoot><tr style="background:var(--bg);font-weight:800">
                 <td colspan="8">TOTAL</td>
                 <td style="color:var(--green)">${fmt(totalARR)}</td>
-                <td>${fmt(totalMRR)}</td>
-                <td style="color:var(--purple)">${fmt(totalComm)}</td>
+                <td>${fmt(totalCommDue)}</td>
+                <td style="color:var(--green)">${fmt(totalCommPaid)}</td>
+                <td style="color:${totalCommOwed > 0 ? 'var(--amber)' : 'var(--green)'}">${fmt(totalCommOwed)}</td>
+                <td colspan="2"></td>
               </tr></tfoot>
             </table>
           </div>
