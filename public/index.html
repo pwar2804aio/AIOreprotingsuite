@@ -332,7 +332,7 @@
     <div class="brand">
       <img src="aio-logo.png" alt="AIO" style="width:70px;margin-bottom:4px;filter:brightness(0) invert(1)">
       <h1>AIO Reports Centre</h1>
-      <small>v1.0.17</small>
+      <small>v1.0.18</small>
     </div>
     <nav>
       <div class="nav-label">Overview</div>
@@ -4375,62 +4375,29 @@ const App = (() => {
   }
 
   // ── Exec Board (board meeting view) ─────────────────────────
-  // Lifecycle stage labels for company-level "deployment stage"
-  const EXEC_LC_LABELS = {
-    '3319615195': 'Onboarding',
-    '3318740675': 'Deployed',
-    '3320851165': 'Active',
-    '3471221460': 'Active Marketing Only',
-    '3472768714': 'On Hold',
-    '3318740676': 'Churned',
-    customer: 'Customer',
-    opportunity: 'Open Deal',
+  // Real Deployment Stage property values (migrated_00nfi000003lzy1uac)
+  const DEPLOY_STAGE_PROP = 'migrated_00nfi000003lzy1uac';
+  const DEPLOY_STAGE_LABELS = {
+    'On-Boarding': 'Onboarding',
+    'Go Live': 'Install/Training',
+    'Deployed Billing Update Needed': 'Deployed (Billing Update Needed)',
+    'Active': 'Deployed',
+    'Company Active': 'Company Active',
+    'On Hold': 'On Hold',
+    'Cancelled Before Live': 'Cancelled Before Live',
+    'Churned': 'Churned',
   };
-  const EXEC_LC_COLORS = {
-    '3319615195': '#7c5cfc',
-    '3318740675': '#00c48c',
-    '3320851165': '#4caf50',
-    '3471221460': '#8bc34a',
-    '3472768714': '#f5a623',
-    '3318740676': '#e8481e',
-    customer: '#4c6ef5',
-    opportunity: '#f5a623',
+  const DEPLOY_STAGE_COLORS = {
+    'On-Boarding': '#7c5cfc',
+    'Go Live': '#4c6ef5',
+    'Deployed Billing Update Needed': '#f5a623',
+    'Active': '#00c48c',
+    'Company Active': '#4caf50',
+    'On Hold': '#ffa726',
+    'Cancelled Before Live': '#9c27b0',
+    'Churned': '#e8481e',
   };
-  const EXEC_ACTIVE_STAGES = ['3319615195','3318740675','3320851165','3471221460','3472768714','customer'];
-  const EXEC_CHURN_STAGES = ['3318740676'];
-
-  // Fetch deals with stage Cancelled Before Live and resolve their associated companies
-  async function fetchCancelledBeforeLiveCompanyMap() {
-    // Query all closed-lost-ish cancelled-before-live deals (stage 3060460231)
-    const dealsRes = await searchAllCRM('deals',
-      ['dealname','dealstage','closedate','hubspot_owner_id','amount','hs_v2_date_entered_3060460231'],
-      [{ propertyName: 'dealstage', operator: 'EQ', value: '3060460231' }],
-      []
-    );
-    const dealIds = dealsRes.results.map(d => d.id);
-    if (!dealIds.length) return new Map();
-
-    // Batch read with company associations (max 100 per call)
-    const map = new Map(); // companyId → { dealId, dealName, cancelledDate }
-    for (let i = 0; i < dealIds.length; i += 100) {
-      const batch = dealIds.slice(i, i + 100);
-      try {
-        const res = await api('crm/v3/objects/deals/batch/read', 'POST', {
-          properties: ['dealname','closedate','hs_v2_date_entered_3060460231'],
-          inputs: batch.map(id => ({ id })),
-          associations: ['companies'],
-        });
-        (res.results || []).forEach(d => {
-          const compIds = (d.associations?.companies?.results || []).map(a => a.id);
-          const cancelledDate = d.properties.hs_v2_date_entered_3060460231 || d.properties.closedate || null;
-          compIds.forEach(cid => {
-            if (!map.has(cid)) map.set(cid, { dealId: d.id, dealName: d.properties.dealname || '', cancelledDate });
-          });
-        });
-      } catch (e) { /* batch read failed; continue */ }
-    }
-    return map;
-  }
+  const DEPLOY_EXIT_STAGES = ['Churned', 'Cancelled Before Live'];
 
   async function renderExecBoard() {
     try {
@@ -4439,59 +4406,53 @@ const App = (() => {
       // Property keys
       const ONBOARD_PROP = 'on_boarding_call';
       const INSTALL_PROP = 'migrated_00npw00000fv4pz2ad';
-      const ACTIVE_PROP = 'migrated_00npw00000fivll2al';
-      const CHURN_DATE_PROP = 'hs_v2_date_entered_3318740676'; // lifecycle stage entry date (Churned)
+      const ACTIVE_PROP = 'activation_date';
 
-      const props = ['name','lifecyclestage','subscription_status','hold_reason',
+      const props = ['name', DEPLOY_STAGE_PROP, 'hold_reason',
         ONBOARD_PROP, INSTALL_PROP, ACTIVE_PROP,
         'arr','mrr','monthly_recurring_revenue_mrr',
-        'hubspot_owner_id', CHURN_DATE_PROP];
+        'hubspot_owner_id','hs_lastmodifieddate'];
 
-      // 1) Active companies — lifecycle stages used to indicate operational status
-      // 2) Churned companies (lifecyclestage = Churned)
-      // Query both groups in one go via IN filter, then bucket client-side. Skip date filter (board view = all-time snapshot).
-      const allStages = [...EXEC_ACTIVE_STAGES, ...EXEC_CHURN_STAGES];
-      const [companiesRes, cblMap] = await Promise.all([
-        getCachedSearch('execboard_companies', 'companies', props,
-          [{ propertyName: 'lifecyclestage', operator: 'IN', values: allStages }],
-          [{ propertyName: 'name', direction: 'ASCENDING' }],
-          true /* skipAutoDate */
-        ),
-        fetchCancelledBeforeLiveCompanyMap(),
-      ]);
+      // Fetch every company that has a Deployment Stage value (skip date filter — all-time snapshot)
+      const companiesRes = await getCachedSearch('execboard_companies', 'companies', props,
+        [{ propertyName: DEPLOY_STAGE_PROP, operator: 'HAS_PROPERTY' }],
+        [{ propertyName: 'name', direction: 'ASCENDING' }],
+        true /* skipAutoDate */
+      );
 
       const all = companiesRes.results;
 
-      // Bucket: any company associated with a Cancelled-Before-Live deal goes to the churned report,
-      // even if its lifecyclestage isn't Churned.
-      const activeCompanies = all.filter(c => EXEC_ACTIVE_STAGES.includes(c.properties.lifecyclestage) && !cblMap.has(c.id));
-      const churnedFromLC = all.filter(c => EXEC_CHURN_STAGES.includes(c.properties.lifecyclestage));
+      // Bucket by Deployment Stage
+      const activeCompanies = all.filter(c => !DEPLOY_EXIT_STAGES.includes(c.properties[DEPLOY_STAGE_PROP]));
+      const churnedAll = all.filter(c => DEPLOY_EXIT_STAGES.includes(c.properties[DEPLOY_STAGE_PROP]));
 
-      // For Cancelled-Before-Live we may also have companies NOT in our company query (lifecycle could be lead/opportunity).
-      // Fetch those separately by id so we have full data.
-      const churnedFromLCIds = new Set(churnedFromLC.map(c => c.id));
-      const cblOnlyIds = [...cblMap.keys()].filter(id => !churnedFromLCIds.has(id));
-      let cblExtraCompanies = [];
-      for (let i = 0; i < cblOnlyIds.length; i += 100) {
-        const batch = cblOnlyIds.slice(i, i + 100);
+      // Fetch deployment-stage history for churned/cancelled companies so we can show real exit dates
+      const exitDateMap = new Map(); // companyId → ISO date string
+      const churnedIds = churnedAll.map(c => c.id);
+      for (let i = 0; i < churnedIds.length; i += 100) {
+        const batch = churnedIds.slice(i, i + 100);
         try {
           const res = await api('crm/v3/objects/companies/batch/read', 'POST', {
-            properties: props,
+            propertiesWithHistory: [DEPLOY_STAGE_PROP],
+            properties: ['name'],
             inputs: batch.map(id => ({ id })),
           });
-          cblExtraCompanies = cblExtraCompanies.concat(res.results || []);
-        } catch (e) { /* skip */ }
+          (res.results || []).forEach(c => {
+            const history = c.propertiesWithHistory?.[DEPLOY_STAGE_PROP] || [];
+            // History is sorted newest-first by HubSpot. Find first entry whose value is an exit stage.
+            const exitEntry = history.find(h => DEPLOY_EXIT_STAGES.includes(h.value));
+            if (exitEntry) exitDateMap.set(c.id, exitEntry.timestamp);
+          });
+        } catch (e) { /* if history read fails, fall back to hs_lastmodifieddate per row */ }
       }
-      const churnedAll = [...churnedFromLC, ...cblExtraCompanies];
 
       // Helpers
       const fmtD = (d) => d ? new Date(d).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '—';
-      const lcLabel = (lc) => EXEC_LC_LABELS[lc] || lc || '—';
-      const lcColor = (lc) => EXEC_LC_COLORS[lc] || '#999';
-      const subLabel = (s) => SUB_STATUS_CONFIG[s]?.label || s || '—';
-      const subColor = (s) => SUB_STATUS_CONFIG[s]?.color || '#999';
+      const stageLabel = (v) => DEPLOY_STAGE_LABELS[v] || v || '—';
+      const stageColor = (v) => DEPLOY_STAGE_COLORS[v] || '#999';
       const arrOf = (c) => parseFloat(c.properties.arr) || 0;
       const mrrOf = (c) => parseFloat(c.properties.mrr) || parseFloat(c.properties.monthly_recurring_revenue_mrr) || 0;
+      const exitDateOf = (c) => exitDateMap.get(c.id) || c.properties.hs_lastmodifieddate || null;
 
       // Active totals
       const activeARR = activeCompanies.reduce((s, c) => s + arrOf(c), 0);
@@ -4499,16 +4460,14 @@ const App = (() => {
 
       // Churned totals
       const churnedARR = churnedAll.reduce((s, c) => s + arrOf(c), 0);
-      const churnedMRR = churnedAll.reduce((s, c) => s + mrrOf(c), 0);
 
       // Active stage breakdown
       const activeStageCounts = {};
-      activeCompanies.forEach(c => { const lc = c.properties.lifecyclestage; activeStageCounts[lc] = (activeStageCounts[lc] || 0) + 1; });
+      activeCompanies.forEach(c => { const v = c.properties[DEPLOY_STAGE_PROP] || 'Unknown'; activeStageCounts[v] = (activeStageCounts[v] || 0) + 1; });
 
       // Filters for active report
       const activeFilterDefs = [
-        { key: 'stage', label: 'Deployment Stage', getter: c => c.properties.lifecyclestage || '' },
-        { key: 'sub', label: 'Subscription', getter: c => c.properties.subscription_status || '__none__' },
+        { key: 'stage', label: 'Deployment Stage', getter: c => c.properties[DEPLOY_STAGE_PROP] || '' },
         { key: 'owner', label: 'Owner', getter: c => c.properties.hubspot_owner_id || '__none__' },
       ];
       const activeFilterOpts = activeFilterDefs.map(f => {
@@ -4516,7 +4475,7 @@ const App = (() => {
         activeCompanies.forEach(r => { const v = f.getter(r); counts[v] = (counts[v] || 0) + 1; });
         return { key: f.key, label: f.label, options: Object.entries(counts).sort((a,b) => b[1]-a[1]).map(([v,c]) => ({
           value: v, count: c,
-          label: f.key === 'stage' ? lcLabel(v) : f.key === 'sub' ? (v === '__none__' ? '— None —' : subLabel(v)) : (v === '__none__' ? 'Unassigned' : (owners[v] || v)),
+          label: f.key === 'stage' ? stageLabel(v) : (v === '__none__' ? 'Unassigned' : (owners[v] || v)),
         })) };
       });
       const activeFiltered = applyFilters('execboard_active', activeCompanies, activeFilterDefs);
@@ -4527,13 +4486,11 @@ const App = (() => {
 
       // CSV exporters
       window._execActiveExport = () => {
-        const headers = ['Company','Deployment Stage','Subscription','Lifecycle','Hold Reason','Onboarding Date','Install Date','Active Date','ARR','MRR','Owner'];
+        const headers = ['Company','Deployment Stage','Hold Reason','Onboarding Date','Install Date','Active Date','ARR','MRR','Owner'];
         const rows = activeFiltered.map(c => [
           c.properties.name || '',
-          lcLabel(c.properties.lifecyclestage),
-          subLabel(c.properties.subscription_status),
-          lcLabel(c.properties.lifecyclestage),
-          c.properties.lifecyclestage === '3472768714' ? (c.properties.hold_reason || '') : '',
+          stageLabel(c.properties[DEPLOY_STAGE_PROP]),
+          c.properties[DEPLOY_STAGE_PROP] === 'On Hold' ? (c.properties.hold_reason || '') : '',
           c.properties[ONBOARD_PROP] ? new Date(c.properties[ONBOARD_PROP]).toISOString().slice(0,10) : '',
           c.properties[INSTALL_PROP] ? new Date(c.properties[INSTALL_PROP]).toISOString().slice(0,10) : '',
           c.properties[ACTIVE_PROP] ? new Date(c.properties[ACTIVE_PROP]).toISOString().slice(0,10) : '',
@@ -4543,38 +4500,27 @@ const App = (() => {
         downloadCSV('exec_board_active.csv', headers, rows);
       };
       window._execChurnedExport = () => {
-        const headers = ['Company','Status','Lifecycle','Onboarding Date','Install Date','Active Date','Churn/Cancel Date','Cancelled-Before-Live Deal','ARR','MRR','Owner'];
-        const rows = churnedAll.map(c => {
-          const cbl = cblMap.get(c.id);
-          const isChurnLC = c.properties.lifecyclestage === '3318740676';
-          const status = cbl && !isChurnLC ? 'Cancelled Before Live' : (isChurnLC ? 'Churned' : 'Cancelled Before Live');
-          const exitDate = cbl ? cbl.cancelledDate : c.properties[CHURN_DATE_PROP];
-          return [
-            c.properties.name || '',
-            status,
-            lcLabel(c.properties.lifecyclestage),
-            c.properties[ONBOARD_PROP] ? new Date(c.properties[ONBOARD_PROP]).toISOString().slice(0,10) : '',
-            c.properties[INSTALL_PROP] ? new Date(c.properties[INSTALL_PROP]).toISOString().slice(0,10) : '',
-            c.properties[ACTIVE_PROP] ? new Date(c.properties[ACTIVE_PROP]).toISOString().slice(0,10) : '',
-            exitDate ? new Date(exitDate).toISOString().slice(0,10) : '',
-            cbl ? cbl.dealName : '',
-            arrOf(c), mrrOf(c),
-            owners[c.properties.hubspot_owner_id] || '',
-          ];
-        });
+        const headers = ['Company','Deployment Stage','Onboarding Date','Install Date','Active Date','Exit Date','ARR','MRR','Owner'];
+        const rows = churnedAll.map(c => [
+          c.properties.name || '',
+          stageLabel(c.properties[DEPLOY_STAGE_PROP]),
+          c.properties[ONBOARD_PROP] ? new Date(c.properties[ONBOARD_PROP]).toISOString().slice(0,10) : '',
+          c.properties[INSTALL_PROP] ? new Date(c.properties[INSTALL_PROP]).toISOString().slice(0,10) : '',
+          c.properties[ACTIVE_PROP] ? new Date(c.properties[ACTIVE_PROP]).toISOString().slice(0,10) : '',
+          exitDateOf(c) ? new Date(exitDateOf(c)).toISOString().slice(0,10) : '',
+          arrOf(c), mrrOf(c),
+          owners[c.properties.hubspot_owner_id] || '',
+        ]);
         downloadCSV('exec_board_churned.csv', headers, rows);
       };
 
-      // Render — Active table row builder
+      // Active table row builder
       const activeRow = (c) => {
-        const lc = c.properties.lifecyclestage;
-        const isHold = lc === '3472768714';
-        const sub = c.properties.subscription_status;
+        const dv = c.properties[DEPLOY_STAGE_PROP];
+        const isHold = dv === 'On Hold';
         return `<tr>
           <td style="font-weight:700">${hsCompany(c)}</td>
-          <td><span class="badge" style="background:${lcColor(lc)}22;color:${lcColor(lc)}">${esc(lcLabel(lc))}</span></td>
-          <td>${sub ? `<span class="badge" style="background:${subColor(sub)}22;color:${subColor(sub)}">${esc(subLabel(sub))}</span>` : '<span style="color:var(--muted)">—</span>'}</td>
-          <td>${esc(lcLabel(lc))}${isHold && c.properties.hold_reason ? `<div style="font-size:11px;color:var(--amber);font-weight:600;margin-top:2px">⏸ ${esc(c.properties.hold_reason)}</div>` : ''}</td>
+          <td><span class="badge" style="background:${stageColor(dv)}22;color:${stageColor(dv)}">${esc(stageLabel(dv))}</span>${isHold && c.properties.hold_reason ? `<div style="font-size:11px;color:var(--amber);font-weight:600;margin-top:2px">⏸ ${esc(c.properties.hold_reason)}</div>` : ''}</td>
           <td>${fmtD(c.properties[ONBOARD_PROP])}</td>
           <td>${fmtD(c.properties[INSTALL_PROP])}</td>
           <td>${fmtD(c.properties[ACTIVE_PROP])}</td>
@@ -4586,31 +4532,25 @@ const App = (() => {
 
       // Churned/Cancelled table row
       const churnedRow = (c) => {
-        const lc = c.properties.lifecyclestage;
-        const cbl = cblMap.get(c.id);
-        const isChurnLC = lc === '3318740676';
-        const statusLabel = isChurnLC ? 'Churned' : 'Cancelled Before Live';
-        const statusColor = isChurnLC ? '#e8481e' : '#9c27b0';
-        const exitDate = cbl ? cbl.cancelledDate : c.properties[CHURN_DATE_PROP];
+        const dv = c.properties[DEPLOY_STAGE_PROP];
         return `<tr>
           <td style="font-weight:700">${hsCompany(c)}</td>
-          <td><span class="badge" style="background:${statusColor}22;color:${statusColor}">${statusLabel}</span></td>
-          <td>${esc(lcLabel(lc))}</td>
+          <td><span class="badge" style="background:${stageColor(dv)}22;color:${stageColor(dv)}">${esc(stageLabel(dv))}</span></td>
           <td>${fmtD(c.properties[ONBOARD_PROP])}</td>
           <td>${fmtD(c.properties[INSTALL_PROP])}</td>
           <td>${fmtD(c.properties[ACTIVE_PROP])}</td>
-          <td style="font-weight:700;color:var(--red)">${fmtD(exitDate)}</td>
+          <td style="font-weight:700;color:var(--red)">${fmtD(exitDateOf(c))}</td>
           <td style="font-weight:700">${fmt(arrOf(c))}</td>
           <td>${fmt(mrrOf(c))}</td>
           <td>${esc(owners[c.properties.hubspot_owner_id] || '—')}</td>
         </tr>`;
       };
 
-      // Sort by ARR desc
+      // Sort
       const activeSorted = [...activeFiltered].sort((a,b) => arrOf(b) - arrOf(a));
       const churnedSorted = [...churnedAll].sort((a,b) => {
-        const ad = (cblMap.get(a.id)?.cancelledDate) || a.properties[CHURN_DATE_PROP] || 0;
-        const bd = (cblMap.get(b.id)?.cancelledDate) || b.properties[CHURN_DATE_PROP] || 0;
+        const ad = exitDateOf(a) || 0;
+        const bd = exitDateOf(b) || 0;
         return new Date(bd) - new Date(ad);
       });
 
@@ -4624,7 +4564,7 @@ const App = (() => {
             <div style="font-size:28px">🏛</div>
             <div>
               <div style="font-weight:800;font-size:15px">Exec Board Snapshot</div>
-              <div style="color:var(--muted);font-size:12px">All-time customer base for board reporting. Excludes leads and open opportunities. "Deployment Stage" = HubSpot company lifecycle stage.</div>
+              <div style="color:var(--muted);font-size:12px">All-time customer base for board reporting. Bucketed by HubSpot Deployment Stage (<code>migrated_00nfi000003lzy1uac</code>). Exit dates pulled from property history.</div>
             </div>
           </div>
         </div>
@@ -4661,7 +4601,7 @@ const App = (() => {
           <div class="card-body" style="padding:0;overflow-x:auto;max-height:700px;overflow-y:auto">
             <table>
               <thead><tr>
-                <th>Company</th><th>Deployment Stage</th><th>Subscription</th><th>Lifecycle</th>
+                <th>Company</th><th>Deployment Stage</th>
                 <th>Onboarding Date</th><th>Install Date</th><th>Active Date</th>
                 <th>ARR</th><th>MRR</th><th>Owner</th>
               </tr></thead>
@@ -4678,7 +4618,7 @@ const App = (() => {
           <div class="card-body" style="padding:0;overflow-x:auto;max-height:700px;overflow-y:auto">
             <table>
               <thead><tr>
-                <th>Company</th><th>Status</th><th>Lifecycle</th>
+                <th>Company</th><th>Deployment Stage</th>
                 <th>Onboarding Date</th><th>Install Date</th><th>Active Date</th>
                 <th>Exit Date</th><th>ARR</th><th>MRR</th><th>Owner</th>
               </tr></thead>
