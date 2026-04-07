@@ -332,7 +332,7 @@
     <div class="brand">
       <img src="aio-logo.png" alt="AIO" style="width:70px;margin-bottom:4px;filter:brightness(0) invert(1)">
       <h1>AIO Reports Centre</h1>
-      <small>v1.0.18</small>
+      <small>v1.0.19</small>
     </div>
     <nav>
       <div class="nav-label">Overview</div>
@@ -4580,11 +4580,11 @@ const App = (() => {
           <div class="card-header"><h3>Active Companies by Deployment Stage</h3></div>
           <div class="card-body">
             <div class="bar-chart">
-              ${stageRows.map(([lc, count]) => {
+              ${stageRows.map(([v, count]) => {
                 const pct = (count / maxStage * 100).toFixed(0);
                 return `<div class="bar-row">
-                  <div class="bar-label">${esc(lcLabel(lc))}</div>
-                  <div class="bar-track"><div class="bar-fill" style="width:${pct}%;background:${lcColor(lc)}"><span>${count}</span></div></div>
+                  <div class="bar-label">${esc(stageLabel(v))}</div>
+                  <div class="bar-track"><div class="bar-fill" style="width:${pct}%;background:${stageColor(v)}"><span>${count}</span></div></div>
                 </div>`;
               }).join('')}
             </div>
