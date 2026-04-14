@@ -332,7 +332,7 @@
     <div class="brand">
       <img src="aio-logo.png" alt="AIO" style="width:70px;margin-bottom:4px;filter:brightness(0) invert(1)">
       <h1>AIO Reports Centre</h1>
-      <small>v1.0.20</small>
+      <small>v1.0.21</small>
     </div>
     <nav>
       <div class="nav-label">Overview</div>
@@ -4456,11 +4456,13 @@ const App = (() => {
       // otherwise the value stored on adyen_processing_arr (if any).
       const ACTIVE_LC = '3320851165';
       const adyenOf = (c) => c.properties.lifecyclestage === ACTIVE_LC ? 2500 : (parseFloat(c.properties.adyen_processing_arr) || 0);
+      const totalArrOf = (c) => arrOf(c) + adyenOf(c);
       const exitDateOf = (c) => exitDateMap.get(c.id) || c.properties.hs_lastmodifieddate || null;
 
       // Active totals
       const activeSaasARR = activeCompanies.reduce((s, c) => s + arrOf(c), 0);
       const activeAdyenARR = activeCompanies.reduce((s, c) => s + adyenOf(c), 0);
+      const activeTotalARR = activeSaasARR + activeAdyenARR;
       const activeMRR = activeCompanies.reduce((s, c) => s + mrrOf(c), 0);
 
       // Churned totals
@@ -4491,7 +4493,7 @@ const App = (() => {
 
       // CSV exporters
       window._execActiveExport = () => {
-        const headers = ['Company','Deployment Stage','Hold Reason','Onboarding Date','Install Date','Active Date','SaaS ARR','Adyen ARR','MRR','Owner'];
+        const headers = ['Company','Deployment Stage','Hold Reason','Onboarding Date','Install Date','Active Date','SaaS ARR','Adyen ARR','Total ARR','MRR','Owner'];
         const rows = activeFiltered.map(c => [
           c.properties.name || '',
           stageLabel(c.properties[DEPLOY_STAGE_PROP]),
@@ -4499,13 +4501,13 @@ const App = (() => {
           c.properties[ONBOARD_PROP] ? new Date(c.properties[ONBOARD_PROP]).toISOString().slice(0,10) : '',
           c.properties[INSTALL_PROP] ? new Date(c.properties[INSTALL_PROP]).toISOString().slice(0,10) : '',
           c.properties[ACTIVE_PROP] ? new Date(c.properties[ACTIVE_PROP]).toISOString().slice(0,10) : '',
-          arrOf(c), adyenOf(c), mrrOf(c),
+          arrOf(c), adyenOf(c), totalArrOf(c), mrrOf(c),
           owners[c.properties.hubspot_owner_id] || '',
         ]);
         downloadCSV('exec_board_active.csv', headers, rows);
       };
       window._execChurnedExport = () => {
-        const headers = ['Company','Deployment Stage','Onboarding Date','Install Date','Active Date','Exit Date','SaaS ARR','Adyen ARR','MRR','Owner'];
+        const headers = ['Company','Deployment Stage','Onboarding Date','Install Date','Active Date','Exit Date','SaaS ARR','Adyen ARR','Total ARR','MRR','Owner'];
         const rows = churnedAll.map(c => [
           c.properties.name || '',
           stageLabel(c.properties[DEPLOY_STAGE_PROP]),
@@ -4513,7 +4515,7 @@ const App = (() => {
           c.properties[INSTALL_PROP] ? new Date(c.properties[INSTALL_PROP]).toISOString().slice(0,10) : '',
           c.properties[ACTIVE_PROP] ? new Date(c.properties[ACTIVE_PROP]).toISOString().slice(0,10) : '',
           exitDateOf(c) ? new Date(exitDateOf(c)).toISOString().slice(0,10) : '',
-          arrOf(c), adyenOf(c), mrrOf(c),
+          arrOf(c), adyenOf(c), totalArrOf(c), mrrOf(c),
           owners[c.properties.hubspot_owner_id] || '',
         ]);
         downloadCSV('exec_board_churned.csv', headers, rows);
@@ -4531,6 +4533,7 @@ const App = (() => {
           <td>${fmtD(c.properties[ACTIVE_PROP])}</td>
           <td style="font-weight:700;color:var(--green)">${fmt(arrOf(c))}</td>
           <td style="font-weight:700;color:var(--purple)">${fmt(adyenOf(c))}</td>
+          <td style="font-weight:800;color:var(--blue)">${fmt(totalArrOf(c))}</td>
           <td>${fmt(mrrOf(c))}</td>
           <td>${esc(owners[c.properties.hubspot_owner_id] || '—')}</td>
         </tr>`;
@@ -4548,6 +4551,7 @@ const App = (() => {
           <td style="font-weight:700;color:var(--red)">${fmtD(exitDateOf(c))}</td>
           <td style="font-weight:700">${fmt(arrOf(c))}</td>
           <td>${fmt(adyenOf(c))}</td>
+          <td style="font-weight:800;color:var(--blue)">${fmt(totalArrOf(c))}</td>
           <td>${fmt(mrrOf(c))}</td>
           <td>${esc(owners[c.properties.hubspot_owner_id] || '—')}</td>
         </tr>`;
@@ -4580,6 +4584,7 @@ const App = (() => {
           <div class="stat-card" data-drill="${drillActiveAll}"><div class="label">Active Companies</div><div class="value green">${fmtN(activeFiltered.length)}</div></div>
           <div class="stat-card"><div class="label">SaaS ARR</div><div class="value blue">${fmt(activeSaasARR)}</div></div>
           <div class="stat-card"><div class="label">Adyen ARR</div><div class="value purple">${fmt(activeAdyenARR)}</div><div class="sub">$2,500 per Active</div></div>
+          <div class="stat-card"><div class="label">Total ARR</div><div class="value green">${fmt(activeTotalARR)}</div><div class="sub">SaaS + Adyen</div></div>
           <div class="stat-card"><div class="label">Active MRR</div><div class="value">${fmt(activeMRR)}</div></div>
           <div class="stat-card" data-drill="${drillChurned}"><div class="label">Churned / Cancelled</div><div class="value red">${fmtN(churnedAll.length)}</div><div class="sub">Lost SaaS ARR ${fmt(churnedARR)}</div></div>
         </div>
@@ -4611,7 +4616,7 @@ const App = (() => {
               <thead><tr>
                 <th>Company</th><th>Deployment Stage</th>
                 <th>Onboarding Date</th><th>Install Date</th><th>Active Date</th>
-                <th>SaaS ARR</th><th>Adyen ARR</th><th>MRR</th><th>Owner</th>
+                <th>SaaS ARR</th><th>Adyen ARR</th><th>Total ARR</th><th>MRR</th><th>Owner</th>
               </tr></thead>
               <tbody>${activeSorted.map(activeRow).join('')}</tbody>
             </table>
@@ -4628,7 +4633,7 @@ const App = (() => {
               <thead><tr>
                 <th>Company</th><th>Deployment Stage</th>
                 <th>Onboarding Date</th><th>Install Date</th><th>Active Date</th>
-                <th>Exit Date</th><th>SaaS ARR</th><th>Adyen ARR</th><th>MRR</th><th>Owner</th>
+                <th>Exit Date</th><th>SaaS ARR</th><th>Adyen ARR</th><th>Total ARR</th><th>MRR</th><th>Owner</th>
               </tr></thead>
               <tbody>${churnedSorted.map(churnedRow).join('')}</tbody>
             </table>
