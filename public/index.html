@@ -332,7 +332,7 @@
     <div class="brand">
       <img src="aio-logo.png" alt="AIO" style="width:70px;margin-bottom:4px;filter:brightness(0) invert(1)">
       <h1>AIO Reports Centre</h1>
-      <small>v1.0.22</small>
+      <small>v1.0.23</small>
     </div>
     <nav>
       <div class="nav-label">Overview</div>
@@ -2270,10 +2270,11 @@ const App = (() => {
           <div class="card-header"><h3>Recent Companies</h3></div>
           <div class="card-body" style="padding:0; max-height:500px; overflow-y:auto;">
             <table>
-              <thead><tr><th>Company</th><th>City</th><th>Industry</th><th>Contacts</th><th>Deals</th><th>Owner</th></tr></thead>
+              <thead><tr><th>Company</th><th>Tenant ID</th><th>City</th><th>Industry</th><th>Contacts</th><th>Deals</th><th>Owner</th></tr></thead>
               <tbody>
                 ${companies.results.slice(0, 50).map(c => `<tr>
                   <td style="font-weight:600">${hsCompany(c)}</td>
+                  <td style="font-size:12px;color:var(--muted)">${esc(tidOf(c))}</td>
                   <td>${esc(c.properties.city || '—')}</td>
                   <td>${esc(c.properties.industry || '—')}</td>
                   <td>${c.properties.num_associated_contacts || '0'}</td>
@@ -2332,11 +2333,8 @@ const App = (() => {
   }
   function hsDeal(d) { return hsLink('deal', d.id, d.properties.dealname || '—'); }
   const TENANT_ID_PROP = 'migrated_00nfi00000bnezluan';
-  function hsCompany(c) {
-    const tid = c.properties?.[TENANT_ID_PROP];
-    const link = hsLink('company', c.id, c.properties.name || '—');
-    return tid ? `${link}<div style="font-size:10px;color:var(--muted);margin-top:1px">TID: ${esc(tid)}</div>` : link;
-  }
+  function hsCompany(c) { return hsLink('company', c.id, c.properties.name || '—'); }
+  function tidOf(c) { return c.properties?.[TENANT_ID_PROP] || '—'; }
   function hsContact(c) { return hsLink('contact', c.id, `${c.properties.firstname || ''} ${c.properties.lastname || ''}`.trim() || '—'); }
   function hsTicket(t) { return hsLink('ticket', t.id, t.properties.subject || '—'); }
 
@@ -2486,6 +2484,7 @@ const App = (() => {
   function companyDrillColumns() {
     return [
       { label: 'Company', render: c => `<strong>${hsCompany(c)}</strong>` },
+      { label: 'Tenant ID', render: c => `<span style="font-size:12px;color:var(--muted)">${esc(tidOf(c))}</span>` },
       { label: 'ARR', render: c => `<span style="font-weight:700">${fmt(c.properties.arr)}</span>` },
       { label: 'MRR', render: c => fmt(c.properties.mrr || c.properties.monthly_recurring_revenue_mrr) },
       { label: 'Type', render: c => esc(REST_TYPE_LABELS[c.properties.industrytype] || c.properties.industrytype || '—') },
@@ -3789,12 +3788,13 @@ const App = (() => {
           <div class="card-header"><h3 style="color:var(--red)">Unassigned Leads (${unassigned.length})</h3></div>
           <div class="card-body" style="padding:0;overflow-x:auto;max-height:400px;overflow-y:auto">
             <table>
-              <thead><tr><th>Company</th><th>Created</th><th>Age</th><th>Source</th><th>Type</th><th>City</th></tr></thead>
+              <thead><tr><th>Company</th><th>Tenant ID</th><th>Created</th><th>Age</th><th>Source</th><th>Type</th><th>City</th></tr></thead>
               <tbody>
                 ${unassigned.map(c => {
                   const days = daysSince(c.properties.createdate);
                   return `<tr>
                     <td style="font-weight:700">${hsCompany(c)}</td>
+                    <td style="font-size:12px;color:var(--muted)">${esc(tidOf(c))}</td>
                     <td>${new Date(c.properties.createdate).toLocaleDateString('en-US',{month:'short',day:'numeric'})}</td>
                     <td>${ageBadge(days)}</td>
                     <td>${esc(getSource(c))}</td>
@@ -3811,12 +3811,13 @@ const App = (() => {
           <div class="card-header"><h3 style="color:var(--amber)">No Action Taken (${notContacted.length})</h3></div>
           <div class="card-body" style="padding:0;overflow-x:auto;max-height:400px;overflow-y:auto">
             <table>
-              <thead><tr><th>Company</th><th>Created</th><th>Age</th><th>Assigned To</th><th>Source</th><th>Type</th></tr></thead>
+              <thead><tr><th>Company</th><th>Tenant ID</th><th>Created</th><th>Age</th><th>Assigned To</th><th>Source</th><th>Type</th></tr></thead>
               <tbody>
                 ${notContacted.sort((a,b) => new Date(a.properties.createdate) - new Date(b.properties.createdate)).map(c => {
                   const days = daysSince(c.properties.createdate);
                   return `<tr>
                     <td style="font-weight:700">${hsCompany(c)}</td>
+                    <td style="font-size:12px;color:var(--muted)">${esc(tidOf(c))}</td>
                     <td>${new Date(c.properties.createdate).toLocaleDateString('en-US',{month:'short',day:'numeric'})}</td>
                     <td>${ageBadge(days)}</td>
                     <td>${c.properties.hubspot_owner_id ? esc(owners[c.properties.hubspot_owner_id] || '—') : '<span style="color:var(--red);font-weight:600">Unassigned</span>'}</td>
@@ -3833,12 +3834,13 @@ const App = (() => {
           <div class="card-header"><h3>All New Leads (${fmtN(all.length)})</h3></div>
           <div class="card-body" style="padding:0;overflow-x:auto;max-height:600px;overflow-y:auto">
             <table>
-              <thead><tr><th>Company</th><th>Created</th><th>Age</th><th>Action</th><th>Touchpoints</th><th>Owner</th><th>Source</th><th>Type</th><th>City</th></tr></thead>
+              <thead><tr><th>Company</th><th>Tenant ID</th><th>Created</th><th>Age</th><th>Action</th><th>Touchpoints</th><th>Owner</th><th>Source</th><th>Type</th><th>City</th></tr></thead>
               <tbody>
                 ${all.map(c => {
                   const days = daysSince(c.properties.createdate);
                   return `<tr>
                     <td style="font-weight:700">${hsCompany(c)}</td>
+                    <td style="font-size:12px;color:var(--muted)">${esc(tidOf(c))}</td>
                     <td style="white-space:nowrap">${new Date(c.properties.createdate).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'})}</td>
                     <td>${ageBadge(days)}</td>
                     <td>${actionBadge(c)}</td>
@@ -4062,7 +4064,7 @@ const App = (() => {
           <div class="card-header"><h3 style="color:var(--red)">At-Risk Subscriptions — ${fmt(atRiskARR)} ARR at Stake</h3></div>
           <div class="card-body" style="padding:0;overflow-x:auto">
             <table>
-              <thead><tr><th>Company</th><th>Status</th><th>ARR</th><th>MRR</th><th>Type</th><th>Last Contact</th><th>Owner</th></tr></thead>
+              <thead><tr><th>Company</th><th>Tenant ID</th><th>Status</th><th>ARR</th><th>MRR</th><th>Type</th><th>Last Contact</th><th>Owner</th></tr></thead>
               <tbody>
                 ${atRisk.sort((a,b) => (parseFloat(b.properties.arr)||0) - (parseFloat(a.properties.arr)||0)).map(c => {
                   const s = c.properties.subscription_status;
@@ -4070,6 +4072,7 @@ const App = (() => {
                   const days = daysSince(c.properties.notes_last_contacted);
                   return `<tr>
                     <td style="font-weight:700">${hsCompany(c)}</td>
+                    <td style="font-size:12px;color:var(--muted)">${esc(tidOf(c))}</td>
                     <td><span class="badge" style="background:${cfg.color}22;color:${cfg.color}">${cfg.label}</span></td>
                     <td style="font-weight:600">${fmt(c.properties.arr)}</td>
                     <td>${fmt(c.properties.mrr || c.properties.monthly_recurring_revenue_mrr)}</td>
@@ -4087,12 +4090,13 @@ const App = (() => {
           <div class="card-header"><h3 style="color:var(--amber)">Silent Customers — Active but No Contact in 30+ Days</h3></div>
           <div class="card-body" style="padding:0;overflow-x:auto">
             <table>
-              <thead><tr><th>Company</th><th>ARR</th><th>Days Since Contact</th><th>Health</th><th>Type</th><th>Owner</th></tr></thead>
+              <thead><tr><th>Company</th><th>Tenant ID</th><th>ARR</th><th>Days Since Contact</th><th>Health</th><th>Type</th><th>Owner</th></tr></thead>
               <tbody>
                 ${silent.slice(0, 20).map(c => {
                   const days = daysSince(c.properties.notes_last_contacted);
                   return `<tr>
                     <td style="font-weight:700">${hsCompany(c)}</td>
+                    <td style="font-size:12px;color:var(--muted)">${esc(tidOf(c))}</td>
                     <td style="font-weight:600">${fmt(c.properties.arr)}</td>
                     <td style="font-weight:700;color:${days > 45 ? 'var(--red)' : 'var(--amber)'}">${days < 999 ? days + ' days' : 'Never'}</td>
                     <td>${healthBadge(days)}</td>
@@ -4109,10 +4113,11 @@ const App = (() => {
           <div class="card-header"><h3 style="color:var(--purple)">Active with $0 ARR — Needs Revenue Setup (${zeroARR.length})</h3></div>
           <div class="card-body" style="padding:0;overflow-x:auto">
             <table>
-              <thead><tr><th>Company</th><th>Activated</th><th>Last Contact</th><th>Owner</th></tr></thead>
+              <thead><tr><th>Company</th><th>Tenant ID</th><th>Activated</th><th>Last Contact</th><th>Owner</th></tr></thead>
               <tbody>
                 ${zeroARR.map(c => `<tr>
                   <td style="font-weight:700">${hsCompany(c)}</td>
+                  <td style="font-size:12px;color:var(--muted)">${esc(tidOf(c))}</td>
                   <td>${c.properties.activation_date ? new Date(c.properties.activation_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '—'}</td>
                   <td>${daysSince(c.properties.notes_last_contacted) < 999 ? daysSince(c.properties.notes_last_contacted) + 'd ago' : 'Never'}</td>
                   <td>${esc(owners[c.properties.hubspot_owner_id] || '—')}</td>
@@ -4126,13 +4131,14 @@ const App = (() => {
           <div class="card-header"><h3>Churned / Expired (${churned.length}) — ${fmt(churnedARR)} ARR Lost</h3></div>
           <div class="card-body" style="padding:0;overflow-x:auto;max-height:300px;overflow-y:auto">
             <table>
-              <thead><tr><th>Company</th><th>Status</th><th>ARR Was</th><th>Type</th><th>Cuisine</th><th>Owner</th></tr></thead>
+              <thead><tr><th>Company</th><th>Tenant ID</th><th>Status</th><th>ARR Was</th><th>Type</th><th>Cuisine</th><th>Owner</th></tr></thead>
               <tbody>
                 ${churned.sort((a,b) => (parseFloat(b.properties.arr)||0) - (parseFloat(a.properties.arr)||0)).map(c => {
                   const s = c.properties.subscription_status;
                   const cfg = SUB_STATUS_CONFIG[s] || { label: s, color: '#999' };
                   return `<tr>
                     <td style="font-weight:700">${hsCompany(c)}</td>
+                    <td style="font-size:12px;color:var(--muted)">${esc(tidOf(c))}</td>
                     <td><span class="badge" style="background:${cfg.color}22;color:${cfg.color}">${cfg.label}</span></td>
                     <td style="color:var(--muted)">${fmt(c.properties.arr)}</td>
                     <td>${esc(REST_TYPE_LABELS[c.properties.industrytype] || c.properties.industrytype || '—')}</td>
@@ -4149,12 +4155,13 @@ const App = (() => {
           <div class="card-header"><h3>All Active Customers (${active.length})</h3></div>
           <div class="card-body" style="padding:0;overflow-x:auto;max-height:600px;overflow-y:auto">
             <table>
-              <thead><tr><th>Company</th><th>ARR</th><th>MRR</th><th>Adyen ARR</th><th>Type</th><th>Cuisine</th><th>Health</th><th>Last Contact</th><th>Owner</th></tr></thead>
+              <thead><tr><th>Company</th><th>Tenant ID</th><th>ARR</th><th>MRR</th><th>Adyen ARR</th><th>Type</th><th>Cuisine</th><th>Health</th><th>Last Contact</th><th>Owner</th></tr></thead>
               <tbody>
                 ${active.sort((a, b) => (parseFloat(b.properties.arr) || 0) - (parseFloat(a.properties.arr) || 0)).map(c => {
                   const days = daysSince(c.properties.notes_last_contacted);
                   return `<tr>
                     <td style="font-weight:700">${hsCompany(c)}</td>
+                    <td style="font-size:12px;color:var(--muted)">${esc(tidOf(c))}</td>
                     <td style="font-weight:700;color:var(--green)">${fmt(c.properties.arr)}</td>
                     <td>${fmt(c.properties.mrr || c.properties.monthly_recurring_revenue_mrr)}</td>
                     <td>${fmt(c.properties.adyen_processing_arr)}</td>
@@ -4342,7 +4349,7 @@ const App = (() => {
           <div class="card-header"><h3>All Active Customers (${fmtN(all.length)})</h3></div>
           <div class="card-body" style="padding:0;overflow-x:auto;max-height:700px;overflow-y:auto">
             <table>
-              <thead><tr><th>Company</th><th>Status</th><th>Deployed</th><th>ARR</th><th>MRR</th><th>Adyen ARR</th><th>Type</th><th>Cuisine</th><th>Health</th><th>Last Contact</th><th>Owner</th></tr></thead>
+              <thead><tr><th>Company</th><th>Tenant ID</th><th>Status</th><th>Deployed</th><th>ARR</th><th>MRR</th><th>Adyen ARR</th><th>Type</th><th>Cuisine</th><th>Health</th><th>Last Contact</th><th>Owner</th></tr></thead>
               <tbody>
                 ${all.sort((a, b) => (parseFloat(b.properties.arr) || 0) - (parseFloat(a.properties.arr) || 0)).map(c => {
                   const s = c.properties.subscription_status;
@@ -4355,6 +4362,7 @@ const App = (() => {
                     : '—';
                   return `<tr>
                     <td style="font-weight:700">${hsCompany(c)}</td>
+                    <td style="font-size:12px;color:var(--muted)">${esc(tidOf(c))}</td>
                     <td><span class="badge" style="background:${cfg.color}22;color:${cfg.color}">${cfg.label}</span></td>
                     <td>${deployed}</td>
                     <td style="font-weight:700;color:var(--green)">${fmt(c.properties.arr)}</td>
@@ -4534,6 +4542,7 @@ const App = (() => {
         const isHold = dv === 'On Hold';
         return `<tr>
           <td style="font-weight:700">${hsCompany(c)}</td>
+          <td style="font-size:12px;color:var(--muted)">${esc(tidOf(c))}</td>
           <td><span class="badge" style="background:${stageColor(dv)}22;color:${stageColor(dv)}">${esc(stageLabel(dv))}</span>${isHold && c.properties.hold_reason ? `<div style="font-size:11px;color:var(--amber);font-weight:600;margin-top:2px">⏸ ${esc(c.properties.hold_reason)}</div>` : ''}</td>
           <td>${fmtD(c.properties[ONBOARD_PROP])}</td>
           <td>${fmtD(c.properties[INSTALL_PROP])}</td>
@@ -4551,6 +4560,7 @@ const App = (() => {
         const dv = c.properties[DEPLOY_STAGE_PROP];
         return `<tr>
           <td style="font-weight:700">${hsCompany(c)}</td>
+          <td style="font-size:12px;color:var(--muted)">${esc(tidOf(c))}</td>
           <td><span class="badge" style="background:${stageColor(dv)}22;color:${stageColor(dv)}">${esc(stageLabel(dv))}</span></td>
           <td>${fmtD(c.properties[ONBOARD_PROP])}</td>
           <td>${fmtD(c.properties[INSTALL_PROP])}</td>
@@ -4621,7 +4631,7 @@ const App = (() => {
           <div class="card-body" style="padding:0;overflow-x:auto;max-height:700px;overflow-y:auto">
             <table>
               <thead><tr>
-                <th>Company</th><th>Deployment Stage</th>
+                <th>Company</th><th>Tenant ID</th><th>Deployment Stage</th>
                 <th>Onboarding Date</th><th>Install Date</th><th>Active Date</th>
                 <th>SaaS ARR</th><th>Adyen ARR</th><th>Total ARR</th><th>MRR</th><th>Owner</th>
               </tr></thead>
@@ -4638,7 +4648,7 @@ const App = (() => {
           <div class="card-body" style="padding:0;overflow-x:auto;max-height:700px;overflow-y:auto">
             <table>
               <thead><tr>
-                <th>Company</th><th>Deployment Stage</th>
+                <th>Company</th><th>Tenant ID</th><th>Deployment Stage</th>
                 <th>Onboarding Date</th><th>Install Date</th><th>Active Date</th>
                 <th>Exit Date</th><th>SaaS ARR</th><th>Adyen ARR</th><th>Total ARR</th><th>MRR</th><th>Owner</th>
               </tr></thead>
