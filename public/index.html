@@ -332,7 +332,7 @@
     <div class="brand">
       <img src="aio-logo.png" alt="AIO" style="width:70px;margin-bottom:4px;filter:brightness(0) invert(1)">
       <h1>AIO Reports Centre</h1>
-      <small>v1.0.21</small>
+      <small>v1.0.22</small>
     </div>
     <nav>
       <div class="nav-label">Overview</div>
@@ -1896,7 +1896,7 @@ const App = (() => {
   async function renderGeo() {
     try {
       const [companies, deals] = await Promise.all([
-        getCachedSearch('companies_recent', 'companies', ['name','city','state','industry','lifecyclestage','hubspot_owner_id','createdate','num_associated_deals']),
+        getCachedSearch('companies_recent', 'companies', ['name',TENANT_ID_PROP,'city','state','industry','lifecyclestage','hubspot_owner_id','createdate','num_associated_deals']),
         getCachedSearch('deals_all', 'deals', ['dealstage','amount','hubspot_owner_id','dealname','hs_is_closed_won','createdate']),
       ]);
 
@@ -2227,7 +2227,7 @@ const App = (() => {
   // ── Companies Overview ───────────────────────────────────────
   async function renderCompanies() {
     try {
-      const companies = await getCachedSearch('companies_recent', 'companies', ['name','domain','city','industry','lifecyclestage','hubspot_owner_id','createdate','num_associated_contacts','num_associated_deals'], [], [{ propertyName: 'createdate', direction: 'DESCENDING' }]);
+      const companies = await getCachedSearch('companies_recent', 'companies', ['name',TENANT_ID_PROP,'domain','city','industry','lifecyclestage','hubspot_owner_id','createdate','num_associated_contacts','num_associated_deals'], [], [{ propertyName: 'createdate', direction: 'DESCENDING' }]);
 
       const cityCounts = {};
       const industryCounts = {};
@@ -2331,7 +2331,12 @@ const App = (() => {
     return `<a href="${url}" target="_blank" rel="noopener" style="color:inherit;text-decoration:underline;text-decoration-style:dotted;text-underline-offset:2px" title="Open in HubSpot">${esc(label)}</a>`;
   }
   function hsDeal(d) { return hsLink('deal', d.id, d.properties.dealname || '—'); }
-  function hsCompany(c) { return hsLink('company', c.id, c.properties.name || '—'); }
+  const TENANT_ID_PROP = 'migrated_00nfi00000bnezluan';
+  function hsCompany(c) {
+    const tid = c.properties?.[TENANT_ID_PROP];
+    const link = hsLink('company', c.id, c.properties.name || '—');
+    return tid ? `${link}<div style="font-size:10px;color:var(--muted);margin-top:1px">TID: ${esc(tid)}</div>` : link;
+  }
   function hsContact(c) { return hsLink('contact', c.id, `${c.properties.firstname || ''} ${c.properties.lastname || ''}`.trim() || '—'); }
   function hsTicket(t) { return hsLink('ticket', t.id, t.properties.subject || '—'); }
 
@@ -3369,7 +3374,7 @@ const App = (() => {
       const baseFilters = [{ propertyName: 'lifecyclestage', operator: 'EQ', value: 'lead' }, ...dateFilters];
 
       const leads = await getCachedSearch('newleads_all', 'companies',
-        ['name','lifecyclestage','hubspot_owner_id','createdate','notes_last_contacted','notes_last_updated',
+        ['name',TENANT_ID_PROP,'lifecyclestage','hubspot_owner_id','createdate','notes_last_contacted','notes_last_updated',
          'hs_last_sales_activity_timestamp','num_contacted_notes','industrytype','cuisine_type','ownership_type',
          'city','state','hs_lead_status','num_associated_contacts','num_associated_deals','hs_object_source_label',
          'company_source','hs_analytics_source'],
@@ -3379,7 +3384,7 @@ const App = (() => {
 
       // Fetch leads with company_source separately to get all values for the filter
       const compSourceLeads = await getCachedSearch('newleads_compsource', 'companies',
-        ['name','company_source','hubspot_owner_id','createdate','notes_last_contacted',
+        ['name',TENANT_ID_PROP,'company_source','hubspot_owner_id','createdate','notes_last_contacted',
          'num_contacted_notes','industrytype','city','state','num_associated_deals',
          'hs_object_source_label','hs_analytics_source'],
         [{ propertyName: 'lifecyclestage', operator: 'EQ', value: 'lead' },
@@ -3872,7 +3877,7 @@ const App = (() => {
   async function renderSubscriptions() {
     try {
       const companies = await getCachedSearch('subs_companies_full', 'companies',
-        ['name','subscription_status','arr','mrr','monthly_recurring_revenue_mrr','adyen_processing_arr',
+        ['name',TENANT_ID_PROP,'subscription_status','arr','mrr','monthly_recurring_revenue_mrr','adyen_processing_arr',
          'hubspot_owner_id','notes_last_contacted','notes_last_updated','activation_date',
          'industrytype','cuisine_type','ownership_type','num_associated_contacts','num_contacted_notes',
          'lifecyclestage','closedate','total_revenue','hs_last_sales_activity_timestamp'],
@@ -4179,7 +4184,7 @@ const App = (() => {
       const ACTIVE_STATUSES = ['active','unpaid','paused','scheduled'];
 
       const companies = await getCachedSearch('ac_companies', 'companies',
-        ['name','subscription_status','arr','mrr','monthly_recurring_revenue_mrr','adyen_processing_arr',
+        ['name',TENANT_ID_PROP,'subscription_status','arr','mrr','monthly_recurring_revenue_mrr','adyen_processing_arr',
          'hubspot_owner_id','notes_last_contacted','notes_last_updated','activation_date',
          'industrytype','cuisine_type','ownership_type','num_associated_contacts','num_contacted_notes',
          'lifecyclestage','closedate','total_revenue','hs_last_sales_activity_timestamp','city','state'],
@@ -4408,7 +4413,7 @@ const App = (() => {
       const INSTALL_PROP = 'migrated_00npw00000fv4pz2ad';
       const ACTIVE_PROP = 'activation_date';
 
-      const props = ['name', DEPLOY_STAGE_PROP, 'hold_reason','lifecyclestage',
+      const props = ['name', TENANT_ID_PROP, DEPLOY_STAGE_PROP, 'hold_reason','lifecyclestage',
         ONBOARD_PROP, INSTALL_PROP, ACTIVE_PROP,
         'arr','mrr','monthly_recurring_revenue_mrr','adyen_processing_arr',
         'hubspot_owner_id','hs_lastmodifieddate'];
@@ -4493,9 +4498,10 @@ const App = (() => {
 
       // CSV exporters
       window._execActiveExport = () => {
-        const headers = ['Company','Deployment Stage','Hold Reason','Onboarding Date','Install Date','Active Date','SaaS ARR','Adyen ARR','Total ARR','MRR','Owner'];
+        const headers = ['Company','Tenant ID','Deployment Stage','Hold Reason','Onboarding Date','Install Date','Active Date','SaaS ARR','Adyen ARR','Total ARR','MRR','Owner'];
         const rows = activeFiltered.map(c => [
           c.properties.name || '',
+          c.properties[TENANT_ID_PROP] || '',
           stageLabel(c.properties[DEPLOY_STAGE_PROP]),
           c.properties[DEPLOY_STAGE_PROP] === 'On Hold' ? (c.properties.hold_reason || '') : '',
           c.properties[ONBOARD_PROP] ? new Date(c.properties[ONBOARD_PROP]).toISOString().slice(0,10) : '',
@@ -4507,9 +4513,10 @@ const App = (() => {
         downloadCSV('exec_board_active.csv', headers, rows);
       };
       window._execChurnedExport = () => {
-        const headers = ['Company','Deployment Stage','Onboarding Date','Install Date','Active Date','Exit Date','SaaS ARR','Adyen ARR','Total ARR','MRR','Owner'];
+        const headers = ['Company','Tenant ID','Deployment Stage','Onboarding Date','Install Date','Active Date','Exit Date','SaaS ARR','Adyen ARR','Total ARR','MRR','Owner'];
         const rows = churnedAll.map(c => [
           c.properties.name || '',
+          c.properties[TENANT_ID_PROP] || '',
           stageLabel(c.properties[DEPLOY_STAGE_PROP]),
           c.properties[ONBOARD_PROP] ? new Date(c.properties[ONBOARD_PROP]).toISOString().slice(0,10) : '',
           c.properties[INSTALL_PROP] ? new Date(c.properties[INSTALL_PROP]).toISOString().slice(0,10) : '',
