@@ -332,7 +332,7 @@
     <div class="brand">
       <img src="aio-logo.png" alt="AIO" style="width:70px;margin-bottom:4px;filter:brightness(0) invert(1)">
       <h1>AIO Reports Centre</h1>
-      <small>v1.0.23</small>
+      <small>v1.0.24</small>
     </div>
     <nav>
       <div class="nav-label">Overview</div>
@@ -1464,115 +1464,180 @@ const App = (() => {
   // ── Rep Activity ─────────────────────────────────────────────
   async function renderRepActivity() {
     try {
-      // Fetch all Demo/Pitch meetings
-      const meetings = await getCachedSearch('meetings_demo', 'meetings',
-        ['hs_meeting_title','hs_activity_type','hs_meeting_outcome','hs_meeting_start_time','hubspot_owner_id','hs_createdate'],
-        [{ propertyName: 'hs_activity_type', operator: 'EQ', value: 'Demo/Pitch' }],
-        [{ propertyName: 'hs_createdate', direction: 'DESCENDING' }]
-      );
-      const all = meetings.results;
+      // ── Fetch all four data sources in parallel ─────────────
+      // Calls + Meetings auto-filter on global date range via DATE_PROP_MAP.
+      // Deals are filtered manually on closedate so we only count deals CLOSED in the period.
+      const closedateFilters = [];
+      if (dateFrom) closedateFilters.push({ propertyName: 'closedate', operator: 'GTE', value: new Date(dateFrom + 'T00:00:00Z').getTime().toString() });
+      if (dateTo) closedateFilters.push({ propertyName: 'closedate', operator: 'LTE', value: new Date(dateTo + 'T23:59:59Z').getTime().toString() });
 
-      // Aggregate by rep
-      const repData = {};
-      all.forEach(m => {
-        const oid = m.properties.hubspot_owner_id || 'unassigned';
-        if (!repData[oid]) repData[oid] = { total: 0, completed: 0, scheduled: 0, noShow: 0, canceled: 0, rescheduled: 0, other: 0, meetings: [] };
-        repData[oid].total++;
-        repData[oid].meetings.push(m);
-        const outcome = m.properties.hs_meeting_outcome || '';
-        if (outcome === 'COMPLETED') repData[oid].completed++;
-        else if (outcome === 'SCHEDULED') repData[oid].scheduled++;
-        else if (outcome === 'NO_SHOW') repData[oid].noShow++;
-        else if (outcome === 'CANCELED') repData[oid].canceled++;
-        else if (outcome === 'RESCHEDULED') repData[oid].rescheduled++;
-        else repData[oid].other++;
+      const [callsRes, meetingsRes, dealsRes] = await Promise.all([
+        getCachedSearch('repactivity_calls', 'calls',
+          ['hs_call_title','hs_call_status','hs_call_disposition','hubspot_owner_id','hs_createdate','hs_timestamp'],
+          [],
+          [{ propertyName: 'hs_createdate', direction: 'DESCENDING' }]
+        ),
+        getCachedSearch('repactivity_meetings', 'meetings',
+          ['hs_meeting_title','hs_activity_type','hs_meeting_outcome','hs_meeting_start_time','hubspot_owner_id','hs_createdate'],
+          [],
+          [{ propertyName: 'hs_meeting_start_time', direction: 'DESCENDING' }]
+        ),
+        getCachedSearch('repactivity_won_deals', 'deals',
+          ['dealname','dealstage','amount','closedate','hubspot_owner_id','hs_is_closed_won','dealtype'],
+          [{ propertyName: 'hs_is_closed_won', operator: 'EQ', value: 'true' }, ...closedateFilters],
+          [{ propertyName: 'closedate', direction: 'DESCENDING' }],
+          true // skip auto date filter (already applied closedate manually)
+        ),
+      ]);
+
+      const calls = callsRes.results;
+      const meetings = meetingsRes.results;
+      const wonDeals = dealsRes.results.filter(d => d.properties.hs_is_closed_won === 'true' || d.properties.dealstage === 'closedwon');
+
+      // ── Aggregate per rep ────────────────────────────────────
+      const reps = {}; // owner_id -> { calls, apptScheduled, apptCompleted, dealsWon, dealsAmount }
+      const ensure = (oid) => {
+        if (!reps[oid]) reps[oid] = { calls: 0, apptScheduled: 0, apptCompleted: 0, dealsWon: 0, dealsAmount: 0 };
+        return reps[oid];
+      };
+
+      calls.forEach(c => { ensure(c.properties.hubspot_owner_id || 'unassigned').calls++; });
+
+      // Every meeting was scheduled at some point (count of all meetings in period).
+      // "Completed" = outcome === 'COMPLETED'.
+      meetings.forEach(m => {
+        const r = ensure(m.properties.hubspot_owner_id || 'unassigned');
+        r.apptScheduled++;
+        if (m.properties.hs_meeting_outcome === 'COMPLETED') r.apptCompleted++;
       });
 
-      const sorted = Object.entries(repData).sort((a, b) => b[1].total - a[1].total);
-      const maxMeetings = sorted[0]?.[1].total || 1;
-      const totalCompleted = all.filter(m => m.properties.hs_meeting_outcome === 'COMPLETED').length;
-      const totalScheduled = all.filter(m => m.properties.hs_meeting_outcome === 'SCHEDULED').length;
-      const totalNoShow = all.filter(m => m.properties.hs_meeting_outcome === 'NO_SHOW').length;
-
-      // Outcome breakdown for donut
-      const outcomeCounts = {};
-      all.forEach(m => {
-        const o = m.properties.hs_meeting_outcome || 'Unknown';
-        outcomeCounts[o] = (outcomeCounts[o] || 0) + 1;
+      wonDeals.forEach(d => {
+        const r = ensure(d.properties.hubspot_owner_id || 'unassigned');
+        r.dealsWon++;
+        r.dealsAmount += parseFloat(d.properties.amount) || 0;
       });
-      const outcomeColors = { COMPLETED: '#00c48c', SCHEDULED: '#4c6ef5', NO_SHOW: '#e8481e', CANCELED: '#607d8b', RESCHEDULED: '#f5a623', 'DECISION MAKER NOT ON SITE': '#7c5cfc', Unknown: '#999' };
+
+      // Totals
+      const totalCalls = calls.length;
+      const totalApptScheduled = meetings.length;
+      const totalApptCompleted = meetings.filter(m => m.properties.hs_meeting_outcome === 'COMPLETED').length;
+      const totalDealsWon = wonDeals.length;
+      const totalDealsAmount = wonDeals.reduce((s, d) => s + (parseFloat(d.properties.amount) || 0), 0);
+
+      // Sort reps by closed-won deals first, then calls
+      const sorted = Object.entries(reps).sort((a, b) => {
+        if (b[1].dealsWon !== a[1].dealsWon) return b[1].dealsWon - a[1].dealsWon;
+        return b[1].calls - a[1].calls;
+      });
+      const namedReps = sorted.filter(([id]) => id !== 'unassigned');
+      const maxCalls = namedReps.reduce((m, [,d]) => Math.max(m, d.calls), 1);
+
+      // CSV export
+      window._repActivityExport = () => {
+        const headers = ['Rep','Calls','Appointments Scheduled','Appointments Completed','Completion Rate','Closed-Won Deals','Closed-Won ARR'];
+        const rows = sorted.map(([id, d]) => {
+          const cr = d.apptScheduled > 0 ? ((d.apptCompleted / d.apptScheduled) * 100).toFixed(0) + '%' : '—';
+          return [
+            owners[id] || (id === 'unassigned' ? 'Unassigned' : 'ID: ' + id),
+            d.calls, d.apptScheduled, d.apptCompleted, cr, d.dealsWon, d.dealsAmount.toFixed(2),
+          ];
+        });
+        downloadCSV('rep_activity_' + (dateFrom || 'all') + '_to_' + (dateTo || 'now') + '.csv', headers, rows);
+      };
 
       $('content').innerHTML = `
-        <div class="stats-row">
-          <div class="stat-card"><div class="label">Total Demo/Pitch</div><div class="value">${fmtN(all.length)}</div></div>
-          <div class="stat-card"><div class="label">Completed</div><div class="value green">${fmtN(totalCompleted)}</div></div>
-          <div class="stat-card"><div class="label">Scheduled</div><div class="value blue">${fmtN(totalScheduled)}</div></div>
-          <div class="stat-card"><div class="label">No Shows</div><div class="value red">${fmtN(totalNoShow)}</div></div>
-          <div class="stat-card"><div class="label">Active Reps</div><div class="value purple">${fmtN(sorted.filter(([id]) => id !== 'unassigned').length)}</div></div>
-        </div>
-
-        <div style="display:grid; grid-template-columns: 1fr 1fr; gap: 20px;">
-          <div class="card">
-            <div class="card-header"><h3>Demo/Pitch Meetings by Rep</h3></div>
-            <div class="card-body">
-              <div class="bar-chart">
-                ${sorted.filter(([id]) => id !== 'unassigned').map(([id, d], i) => {
-                  const pct = (d.total / maxMeetings * 100).toFixed(0);
-                  return `<div class="bar-row">
-                    <div class="bar-label">${esc(owners[id] || 'ID: ' + id)}</div>
-                    <div class="bar-track"><div class="bar-fill" style="width:${pct}%;background:${COLORS[i % COLORS.length]}"><span>${d.total}</span></div></div>
-                  </div>`;
-                }).join('')}
-              </div>
+        <div class="card" style="margin-bottom:14px;background:linear-gradient(135deg,#4c6ef511,#00c48c11);border-left:4px solid var(--blue)">
+          <div class="card-body" style="display:flex;align-items:center;gap:14px">
+            <div style="font-size:28px">📊</div>
+            <div>
+              <div style="font-weight:800;font-size:15px">Rep Activity — Calls, Appointments &amp; Closed-Won</div>
+              <div style="color:var(--muted);font-size:12px">Activity tracking across the global date range. Targets per rep: 40 activities/day, 8 demos scheduled/wk, 8 demos run/wk. Quota: $48K ARR/mo.</div>
             </div>
           </div>
-          <div class="card">
-            <div class="card-header"><h3>Outcome Breakdown</h3></div>
-            <div class="card-body" id="rep-activity-donut"></div>
-          </div>
         </div>
 
+        <div class="stats-row">
+          <div class="stat-card"><div class="label">Calls</div><div class="value blue">${fmtN(totalCalls)}</div></div>
+          <div class="stat-card"><div class="label">Appts Scheduled</div><div class="value purple">${fmtN(totalApptScheduled)}</div></div>
+          <div class="stat-card"><div class="label">Appts Completed</div><div class="value green">${fmtN(totalApptCompleted)}</div><div class="sub">${totalApptScheduled > 0 ? ((totalApptCompleted/totalApptScheduled)*100).toFixed(0) + '% completion' : '—'}</div></div>
+          <div class="stat-card"><div class="label">Closed-Won Deals</div><div class="value">${fmtN(totalDealsWon)}</div></div>
+          <div class="stat-card"><div class="label">Closed-Won ARR</div><div class="value green">${fmt(totalDealsAmount)}</div></div>
+        </div>
+
+        ${namedReps.length ? `<div class="card">
+          <div class="card-header"><h3>Calls by Rep</h3></div>
+          <div class="card-body">
+            <div class="bar-chart">
+              ${namedReps.map(([id, d], i) => {
+                const pct = (d.calls / maxCalls * 100).toFixed(0);
+                return `<div class="bar-row">
+                  <div class="bar-label">${esc(owners[id] || 'ID: ' + id)}</div>
+                  <div class="bar-track"><div class="bar-fill" style="width:${pct}%;background:${COLORS[i % COLORS.length]}"><span>${d.calls}</span></div></div>
+                </div>`;
+              }).join('')}
+            </div>
+          </div>
+        </div>` : ''}
+
         <div class="card">
-          <div class="card-header"><h3>Rep Performance Detail</h3></div>
-          <div class="card-body" style="padding:0;">
+          <div class="card-header" style="display:flex;justify-content:space-between;align-items:center">
+            <h3>Rep Performance Detail</h3>
+            <button onclick="window._repActivityExport()" style="background:var(--primary);color:#fff;border:none;padding:6px 16px;border-radius:6px;cursor:pointer;font-size:13px;font-weight:600">⬇ Export CSV</button>
+          </div>
+          <div class="card-body" style="padding:0;overflow-x:auto">
             <table>
-              <thead><tr><th>Rep</th><th>Total</th><th>Completed</th><th>Scheduled</th><th>No Show</th><th>Canceled</th><th>Rescheduled</th><th>Completion Rate</th></tr></thead>
+              <thead><tr>
+                <th>Rep</th>
+                <th style="text-align:right">Calls</th>
+                <th style="text-align:right">Appts Scheduled</th>
+                <th style="text-align:right">Appts Completed</th>
+                <th>Completion Rate</th>
+                <th style="text-align:right">Closed-Won Deals</th>
+                <th style="text-align:right">Closed-Won ARR</th>
+              </tr></thead>
               <tbody>
-                ${sorted.map(([id, d]) => {
-                  const cr = d.total > 0 ? ((d.completed / d.total) * 100).toFixed(0) : '—';
+                ${sorted.length === 0 ? '<tr><td colspan="7" style="text-align:center;color:var(--muted);padding:24px">No activity in this date range.</td></tr>' : sorted.map(([id, d]) => {
+                  const cr = d.apptScheduled > 0 ? ((d.apptCompleted / d.apptScheduled) * 100).toFixed(0) : '—';
                   const crClass = cr !== '—' ? (parseFloat(cr) >= 60 ? 'badge-green' : parseFloat(cr) >= 30 ? 'badge-amber' : 'badge-red') : 'badge-gray';
                   return `<tr>
                     <td style="font-weight:600">${esc(owners[id] || (id === 'unassigned' ? 'Unassigned' : 'ID: ' + id))}</td>
-                    <td style="font-weight:700">${d.total}</td>
-                    <td style="color:var(--green);font-weight:600">${d.completed}</td>
-                    <td style="color:var(--blue);font-weight:600">${d.scheduled}</td>
-                    <td style="color:var(--red);font-weight:600">${d.noShow}</td>
-                    <td>${d.canceled}</td>
-                    <td>${d.rescheduled}</td>
+                    <td style="text-align:right;font-weight:700;color:var(--blue)">${fmtN(d.calls)}</td>
+                    <td style="text-align:right;font-weight:600;color:var(--purple)">${fmtN(d.apptScheduled)}</td>
+                    <td style="text-align:right;font-weight:600;color:var(--green)">${fmtN(d.apptCompleted)}</td>
                     <td><span class="badge ${crClass}">${cr}${cr !== '—' ? '%' : ''}</span></td>
+                    <td style="text-align:right;font-weight:700">${fmtN(d.dealsWon)}</td>
+                    <td style="text-align:right;font-weight:700;color:var(--green)">${fmt(d.dealsAmount)}</td>
                   </tr>`;
                 }).join('')}
               </tbody>
+              ${sorted.length > 0 ? `<tfoot>
+                <tr style="border-top:2px solid var(--border);font-weight:800;background:var(--bg-secondary)">
+                  <td>Total</td>
+                  <td style="text-align:right;color:var(--blue)">${fmtN(totalCalls)}</td>
+                  <td style="text-align:right;color:var(--purple)">${fmtN(totalApptScheduled)}</td>
+                  <td style="text-align:right;color:var(--green)">${fmtN(totalApptCompleted)}</td>
+                  <td>${totalApptScheduled > 0 ? ((totalApptCompleted/totalApptScheduled)*100).toFixed(0) + '%' : '—'}</td>
+                  <td style="text-align:right">${fmtN(totalDealsWon)}</td>
+                  <td style="text-align:right;color:var(--green)">${fmt(totalDealsAmount)}</td>
+                </tr>
+              </tfoot>` : ''}
             </table>
           </div>
         </div>
 
         <div class="card">
-          <div class="card-header"><h3>Recent Demo/Pitch Meetings</h3></div>
-          <div class="card-body" style="padding:0; max-height:500px; overflow-y:auto;">
+          <div class="card-header"><h3>Recent Closed-Won Deals (${fmtN(wonDeals.length)})</h3></div>
+          <div class="card-body" style="padding:0; max-height:400px; overflow-y:auto;">
             <table>
-              <thead><tr><th>Meeting</th><th>Rep</th><th>Date</th><th>Outcome</th></tr></thead>
+              <thead><tr><th>Deal</th><th>Rep</th><th>Closed</th><th style="text-align:right">Amount</th></tr></thead>
               <tbody>
-                ${all.slice(0, 50).map(m => {
-                  const title = m.properties.hs_meeting_title || '(No title)';
-                  const date = m.properties.hs_meeting_start_time ? new Date(m.properties.hs_meeting_start_time).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '—';
-                  const outcome = m.properties.hs_meeting_outcome || '—';
-                  const oClass = { COMPLETED: 'badge-green', SCHEDULED: 'badge-blue', NO_SHOW: 'badge-red', CANCELED: 'badge-gray', RESCHEDULED: 'badge-amber' }[outcome] || 'badge-gray';
+                ${wonDeals.length === 0 ? '<tr><td colspan="4" style="text-align:center;color:var(--muted);padding:18px">No closed-won deals in this date range.</td></tr>' : wonDeals.slice(0, 50).map(d => {
+                  const closed = d.properties.closedate ? new Date(d.properties.closedate).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '—';
                   return `<tr>
-                    <td style="font-weight:600; max-width:300px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${esc(title)}</td>
-                    <td>${esc(owners[m.properties.hubspot_owner_id] || '—')}</td>
-                    <td>${date}</td>
-                    <td><span class="badge ${oClass}">${esc(outcome)}</span></td>
+                    <td style="font-weight:600">${hsDeal(d)}</td>
+                    <td>${esc(owners[d.properties.hubspot_owner_id] || '—')}</td>
+                    <td>${closed}</td>
+                    <td style="text-align:right;font-weight:700;color:var(--green)">${fmt(d.properties.amount)}</td>
                   </tr>`;
                 }).join('')}
               </tbody>
@@ -1580,10 +1645,6 @@ const App = (() => {
           </div>
         </div>
       `;
-
-      $('rep-activity-donut').innerHTML = buildDonut(
-        Object.entries(outcomeCounts).filter(([,v]) => v > 0).map(([k, v]) => ({ label: k, value: v, color: outcomeColors[k] || '#999' }))
-      );
     } catch (e) {
       $('content').innerHTML = `<div class="loading-state" style="color:var(--red)">Error: ${esc(e.message)}</div>`;
     }
