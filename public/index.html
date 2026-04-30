@@ -332,7 +332,7 @@
     <div class="brand">
       <img src="aio-logo.png" alt="AIO" style="width:70px;margin-bottom:4px;filter:brightness(0) invert(1)">
       <h1>AIO Reports Centre</h1>
-      <small>v1.0.24</small>
+      <small>v1.0.25</small>
     </div>
     <nav>
       <div class="nav-label">Overview</div>
@@ -1517,28 +1517,57 @@ const App = (() => {
         r.dealsAmount += parseFloat(d.properties.amount) || 0;
       });
 
-      // Totals
-      const totalCalls = calls.length;
-      const totalApptScheduled = meetings.length;
-      const totalApptCompleted = meetings.filter(m => m.properties.hs_meeting_outcome === 'COMPLETED').length;
-      const totalDealsWon = wonDeals.length;
-      const totalDealsAmount = wonDeals.reduce((s, d) => s + (parseFloat(d.properties.amount) || 0), 0);
+      // ── Rep multi-select filter ──────────────────────────────
+      // Build options from every owner that has any activity in the period.
+      const repNameOf = (id) => id === 'unassigned' ? 'Unassigned' : (owners[id] || 'ID: ' + id);
+      const repOptions = Object.entries(reps)
+        .map(([id, d]) => ({
+          value: id,
+          label: repNameOf(id),
+          count: d.calls + d.apptScheduled + d.dealsWon,
+        }))
+        .sort((a, b) => a.label.localeCompare(b.label));
 
-      // Sort reps by closed-won deals first, then calls
-      const sorted = Object.entries(reps).sort((a, b) => {
-        if (b[1].dealsWon !== a[1].dealsWon) return b[1].dealsWon - a[1].dealsWon;
-        return b[1].calls - a[1].calls;
-      });
+      const repFilterDefs = [
+        { key: 'rep', label: 'Reps', getter: r => r.id },
+      ];
+      const repFilterOpts = [{ key: 'rep', label: 'Reps', options: repOptions }];
+
+      // Apply filter — applyFilters returns ALL records when no filter is active,
+      // so this gives us the full set OR just the selected reps' set.
+      const allRepRecords = Object.entries(reps).map(([id, d]) => ({ id, data: d }));
+      const filteredRepRecords = applyFilters('repactivity', allRepRecords, repFilterDefs);
+      const filteredIds = new Set(filteredRepRecords.map(r => r.id));
+
+      // Filtered raw lists (used to recompute top-card totals + deals list)
+      const fCalls = calls.filter(c => filteredIds.has(c.properties.hubspot_owner_id || 'unassigned'));
+      const fMeetings = meetings.filter(m => filteredIds.has(m.properties.hubspot_owner_id || 'unassigned'));
+      const fWonDeals = wonDeals.filter(d => filteredIds.has(d.properties.hubspot_owner_id || 'unassigned'));
+
+      // Totals (filtered)
+      const totalCalls = fCalls.length;
+      const totalApptScheduled = fMeetings.length;
+      const totalApptCompleted = fMeetings.filter(m => m.properties.hs_meeting_outcome === 'COMPLETED').length;
+      const totalDealsWon = fWonDeals.length;
+      const totalDealsAmount = fWonDeals.reduce((s, d) => s + (parseFloat(d.properties.amount) || 0), 0);
+
+      // Sort filtered reps by closed-won deals first, then calls
+      const sorted = filteredRepRecords
+        .map(r => [r.id, r.data])
+        .sort((a, b) => {
+          if (b[1].dealsWon !== a[1].dealsWon) return b[1].dealsWon - a[1].dealsWon;
+          return b[1].calls - a[1].calls;
+        });
       const namedReps = sorted.filter(([id]) => id !== 'unassigned');
       const maxCalls = namedReps.reduce((m, [,d]) => Math.max(m, d.calls), 1);
 
-      // CSV export
+      // CSV export (filtered)
       window._repActivityExport = () => {
         const headers = ['Rep','Calls','Appointments Scheduled','Appointments Completed','Completion Rate','Closed-Won Deals','Closed-Won ARR'];
         const rows = sorted.map(([id, d]) => {
           const cr = d.apptScheduled > 0 ? ((d.apptCompleted / d.apptScheduled) * 100).toFixed(0) + '%' : '—';
           return [
-            owners[id] || (id === 'unassigned' ? 'Unassigned' : 'ID: ' + id),
+            repNameOf(id),
             d.calls, d.apptScheduled, d.apptCompleted, cr, d.dealsWon, d.dealsAmount.toFixed(2),
           ];
         });
@@ -1555,6 +1584,8 @@ const App = (() => {
             </div>
           </div>
         </div>
+
+        ${buildFilterBar('repactivity', repFilterOpts)}
 
         <div class="stats-row">
           <div class="stat-card"><div class="label">Calls</div><div class="value blue">${fmtN(totalCalls)}</div></div>
@@ -1626,12 +1657,12 @@ const App = (() => {
         </div>
 
         <div class="card">
-          <div class="card-header"><h3>Recent Closed-Won Deals (${fmtN(wonDeals.length)})</h3></div>
+          <div class="card-header"><h3>Recent Closed-Won Deals (${fmtN(fWonDeals.length)})</h3></div>
           <div class="card-body" style="padding:0; max-height:400px; overflow-y:auto;">
             <table>
               <thead><tr><th>Deal</th><th>Rep</th><th>Closed</th><th style="text-align:right">Amount</th></tr></thead>
               <tbody>
-                ${wonDeals.length === 0 ? '<tr><td colspan="4" style="text-align:center;color:var(--muted);padding:18px">No closed-won deals in this date range.</td></tr>' : wonDeals.slice(0, 50).map(d => {
+                ${fWonDeals.length === 0 ? '<tr><td colspan="4" style="text-align:center;color:var(--muted);padding:18px">No closed-won deals match the current filters.</td></tr>' : fWonDeals.slice(0, 50).map(d => {
                   const closed = d.properties.closedate ? new Date(d.properties.closedate).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '—';
                   return `<tr>
                     <td style="font-weight:600">${hsDeal(d)}</td>
